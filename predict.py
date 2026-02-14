@@ -10,8 +10,15 @@ API:
 
 import os, json, pickle, heapq, numpy as np, pandas as pd
 from datetime import datetime
+import joblib
+import shap
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# Ensure deterministic output
+np.random.seed(42)
+
+# Load models safely
+MODEL_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(os.path.abspath(__file__)) # Keep original BASE_DIR definition
 OUTPUT_DIR = os.path.join(BASE_DIR, "output")
 CONSCIOUSNESS_ORDER = ["Unresponsive", "Pain", "Verbal", "Alert"]
 CONS_MAP = {level: i for i, level in enumerate(CONSCIOUSNESS_ORDER)}
