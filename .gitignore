@@ -1,0 +1,31 @@
+# Virtual environment
+venv/
+.venv/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Model artifacts (large binary files — regenerate with train_model.py)
+output/*.pkl
+
+# Dataset (regenerate with generate_dataset.py)
+data/*.csv
+
+# Keep charts and metadata in git
+!output/model_metadata.json
+!output/*.png
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
