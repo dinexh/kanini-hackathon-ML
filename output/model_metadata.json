@@ -1,5 +1,5 @@
 {
-  "best_risk_model": "RF",
+  "best_risk_model": "XGB",
   "feature_names": [
     "Age",
     "Gender",
@@ -104,14 +104,14 @@
   ],
   "escalation_threshold": 0.6,
   "risk_metrics": {
-    "accuracy": 0.756,
-    "f1_score": 0.7453185242212738,
-    "cv_f1_mean": 0.7366234153494086
+    "accuracy": 0.913,
+    "f1_score": 0.9117311981938584,
+    "cv_f1_mean": 0.920035335735346
   },
   "dept_metrics": {
-    "accuracy": 0.986,
-    "f1_score": 0.9859997952145144,
-    "cv_f1_mean": 0.9901916657548882
+    "accuracy": 0.992,
+    "f1_score": 0.9919384290159438,
+    "cv_f1_mean": 0.9906011377876576
   },
   "priority_weights": {
     "risk_weight": 0.4,

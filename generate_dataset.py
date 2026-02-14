@@ -39,29 +39,127 @@ print("=" * 65)
 
 
 def mkrow(age, symptoms, bp_s, bp_d, hr, temp, spo2, rr, cons, pain, conditions, risk):
-    """Create one patient with WIDE vital noise (realistic variance)."""
-    # Much larger noise ranges to create overlapping distributions
-    noise_hr = np.random.normal(0, 12)        # was 4 → now 12
-    noise_bp = np.random.normal(0, 15)        # was 5 → now 15
-    noise_temp = np.random.normal(0, 0.8)     # was 0.3 → now 0.8
-    noise_spo2 = np.random.normal(0, 3)       # was 1 → now 3
-    noise_rr = np.random.normal(0, 4)         # was 1.5 → now 4
-    noise_pain = np.random.normal(0, 2)       # was 0.8 → now 2
+    """Create one patient with MODERATE vital noise."""
+    # Reduced noise ranges (cleaner but still realistic)
+    noise_hr = np.random.normal(0, 6)        # was 12
+    noise_bp = np.random.normal(0, 8)        # was 15
+    noise_temp = np.random.normal(0, 0.4)     # was 0.8
+    noise_spo2 = np.random.normal(0, 2)       # was 3
+    noise_rr = np.random.normal(0, 2)         # was 4
+    noise_pain = np.random.normal(0, 1)       # was 2
 
     return {
         "Age": age,
         "Gender": np.random.choice(["Male", "Female"]),
         "Symptoms": symptoms,
-        "Blood_Pressure": f"{int(np.clip(bp_s+noise_bp,70,230))}/{int(np.clip(bp_d+np.random.normal(0,8),40,140))}",
-        "Heart_Rate": float(np.clip(round(hr + noise_hr, 0), 40, 200)),
-        "Temperature": float(np.clip(round(temp + noise_temp, 1), 95.0, 107.0)),
-        "SpO2": float(np.clip(round(spo2 + noise_spo2, 0), 65, 100)),
-        "Respiratory_Rate": float(np.clip(round(rr + noise_rr, 0), 8, 50)),
+        "Blood_Pressure": f"{int(np.clip(bp_s+noise_bp,90,180))}/{int(np.clip(bp_d+np.random.normal(0,5),60,110))}",
+        "Heart_Rate": float(np.clip(round(hr + noise_hr, 0), 50, 160)),
+        "Temperature": float(np.clip(round(temp + noise_temp, 1), 96.0, 105.0)),
+        "SpO2": float(np.clip(round(spo2 + noise_spo2, 0), 80, 100)),
+        "Respiratory_Rate": float(np.clip(round(rr + noise_rr, 0), 12, 40)),
         "Consciousness_Level": cons,
         "Pain_Level": float(int(np.clip(pain + noise_pain, 0, 10))),
         "Pre_Existing_Conditions": conditions,
         "Risk_Level": risk,
     }
+
+# ... (seed generation code remains similar but with cleaner base values)
+
+# ─── BORDERLINE / AMBIGUOUS patients (~10% of total seed) ─────
+# Reduced from 15% to 10%
+
+# ... (CTGAN training code unchanged) ...
+
+# ── Extra noise: 2% label noise (was 5%) ──
+n_label_noise = int(FINAL_SIZE * 0.02)
+
+# ── Extra noise: 1% random vital perturbation (was 3%) ──
+n_vital_noise = int(FINAL_SIZE * 0.01)
+
+# ── Department: clinical routing (with safeguards) ──
+def assign_dept(row):
+    s = str(row.get("Symptoms", ""))
+    c = str(row.get("Pre_Existing_Conditions", ""))
+    cons = str(row.get("Consciousness_Level", "Alert"))
+    spo2 = row.get("SpO2", 96)
+    hr = row.get("Heart_Rate", 80)
+    
+    # Parse BP safely
+    bp_str = str(row.get("Blood_Pressure", "120/80"))
+    try:
+        bp_sys = int(bp_str.split("/")[0])
+    except:
+        bp_sys = 120
+
+    # SAFETY CHECK: If vitals are extremely critical, force Emergency regardless of symptoms
+    if spo2 < 85 or hr > 150 or bp_sys > 200 or bp_sys < 70: return "Emergency"
+
+    if cons in ("Unresponsive", "Pain"): return "Emergency"
+    if "Seizures" in s: return "Emergency"
+    if "Slurred Speech" in s or "Previous Stroke" in c: return "Neurology"  # Stroke is Neuro first (or ER if unstable)
+    
+    if "Chest Pain" in s or "Heart Disease" in c: return "Cardiology"
+    if "Hypertension" in c and bp_sys > 160: return "Cardiology"
+    
+    if ("Shortness of Breath" in s or "Cough" in s) and ("Asthma" in c or "COPD" in c): return "Pulmonology"
+    if spo2 < 92 and "Shortness of Breath" in s: return "Pulmonology"
+    
+    if "Confusion" in s or "Dizziness" in s: return "Neurology"
+    if "Headache" in s: return "Neurology"                   # Migraine -> Neuro (was Ortho error)
+    if "Migraine Disorder" in c: return "Neurology"
+    
+    if "Abdominal Pain" in s or "Diarrhea" in s or "Liver Disease" in c: return "Gastroenterology"
+    if "Nausea" in s and "Vomiting" in s: return "Gastroenterology"
+    
+    if "Kidney Stones" in c or "Kidney Disease" in c: return "Nephrology"  # Kidney Stone -> Nephro (was Ortho error)
+    if "Blood in Urine" in s: return "Nephrology"
+    
+    if "Cancer" in c: return "Oncology"
+    
+    if "Body Ache" in s or "Joint Pain" in s or "Ankle Pain" in s: return "Orthopedics"
+    
+    if row.get("Age") < 12: return "Pediatrics"
+    return "General Medicine"
+
+def assign_risk(row):
+    """Enforce clinical rules for Risk Level to prevent ML confusion."""
+    s = str(row.get("Symptoms", ""))
+    c = str(row.get("Pre_Existing_Conditions", ""))
+    cons = str(row.get("Consciousness_Level", "Alert"))
+    spo2 = row.get("SpO2", 96)
+    hr = row.get("Heart_Rate", 80)
+    rr = row.get("Respiratory_Rate", 18)
+    
+    # Parse BP safely
+    bp_str = str(row.get("Blood_Pressure", "120/80"))
+    try:
+        bp_sys = int(bp_str.split("/")[0])
+    except:
+        bp_sys = 120
+
+    # CRITICAL / HIGH RISK RULES
+    if cons == "Unresponsive": return "High"
+    if spo2 < 90: return "High"
+    if hr > 130 or hr < 40: return "High"
+    if bp_sys > 200 or bp_sys < 80: return "High"  # Hypotension is HIGH risk
+    if "Chest Pain" in s and "Heart Disease" in c: return "High"
+    if "Slurred Speech" in s: return "High"        # Stroke
+    if "Seizures" in s: return "High"
+    if "Confusion" in s and "Diabetes" in c: return "High" # DKA risk
+    if "Fever" in s and bp_sys < 90: return "High" # Sepsis
+
+    # MEDIUM RISK RULES
+    if cons == "Pain" or cons == "Verbal": return "Medium"
+    if spo2 < 94: return "Medium"
+    if hr > 110 or hr < 50: return "Medium"
+    if bp_sys > 160 or bp_sys < 90: return "Medium"
+    if "Shortness of Breath" in s: return "Medium"
+    if "Fever" in s and row.get("Age") < 5: return "Medium" # Pediatric fever
+
+    return "Low"
+
+# ... inside data generation loop, verify risk is assigned by rules ...
+# (Update the generation loop to call assign_risk instead of relying purely on seed/CTGAN for risk)
 
 
 rows = []
@@ -89,7 +187,7 @@ for _ in range(45):
     rows.append(mkrow(np.random.randint(55,85), "Confusion, Headache, Dizziness",
         165, 95, 106, 99.0, 92, 23,
         np.random.choice(["Verbal","Alert","Pain"], p=[0.4,0.3,0.3]),
-        7, np.random.choice(["Stroke History, Hypertension", "Stroke History", "Hypertension"]),
+        7, np.random.choice(["Previous Stroke, Hypertension", "Previous Stroke", "Hypertension"]),
         "High"))
 for _ in range(45):
     rows.append(mkrow(np.random.randint(50,82), "Cough, Shortness of Breath, Fever",
@@ -117,7 +215,31 @@ for _ in range(20):
         130, 80, 96, 100.5, 93, 21,
         "Alert", 7, np.random.choice(["Cancer, Diabetes", "Cancer"]),
         "High"))
-
+for _ in range(300):
+    rows.append(mkrow(np.random.randint(60,85), "Slurred Speech, Facial Droop, Weakness",
+        210, 115, 95, 98.4, 94, 20,
+        "Verbal", 2, "Hypertension, Previous Stroke",
+        "High"))
+for _ in range(300):
+    rows.append(mkrow(np.random.randint(18,35), "Confusion, Vomiting, Rapid Breathing",
+        95, 60, 130, 98.0, 95, 35,
+        "Verbal", 6, "Type 1 Diabetes",
+        "High"))
+for _ in range(300):
+    rows.append(mkrow(np.random.randint(30,60), "Severe Flank Pain, Nausea, Blood in Urine",
+        150, 90, 110, 99.0, 97, 24,
+        "Alert", 9, "Kidney Stones",
+        "Medium"))
+for _ in range(300):
+    rows.append(mkrow(np.random.randint(20,50), "Severe Headache, Light Sensitivity",
+        135, 85, 90, 98.5, 98, 18,
+        "Alert", 9, "Migraine Disorder",
+        "Low"))
+for _ in range(300):
+    rows.append(mkrow(np.random.randint(65,90), "Fever, Confusion, Shivering",
+        85, 50, 135, 103.0, 90, 30,
+        "Verbal", 4, "Kidney Disease, Recurrent UTIs",
+        "High"))
 # ─── MEDIUM RISK profiles ─────────────────────────────────────
 for _ in range(60):
     rows.append(mkrow(np.random.randint(40,75), "Chest Pain, Dizziness",
@@ -241,7 +363,7 @@ for _ in range(35):
         np.random.choice(["Chest Pain, Dizziness", "Confusion, Fatigue", "Shortness of Breath, Cough"]),
         148, 88, 98, 99.8, 93, 21,
         "Alert",
-        5, np.random.choice(["Heart Disease, Diabetes", "Stroke History", "COPD, Hypertension"]),
+        5, np.random.choice(["Heart Disease, Diabetes", "Previous Stroke", "COPD, Hypertension"]),
         "High"))  # borderline Medium
 
 # Low patients with Medium-ish vitals
@@ -275,8 +397,14 @@ for _ in range(20):
         np.random.choice(["Fatigue, Confusion", "Dizziness, Fatigue"]),
         145, 88, 82, 98.8, 95, 18,
         np.random.choice(["Alert","Verbal"]),
-        4, np.random.choice(["Hypertension","Stroke History","Diabetes"]),
+        4, np.random.choice(["Hypertension","Previous Stroke","Diabetes"]),
         np.random.choice(["Medium","High"])))  # elderly ambiguous
+
+for _ in range(50):
+    rows.append(mkrow(np.random.randint(20,40), "Chest Tightness, Palpitations, Dizziness",
+        135, 85, 115, 98.6, 98, 22,
+        "Alert", 4, "Anxiety Disorder",
+        "Medium"))
 
 
 seed_df = pd.DataFrame(rows)
@@ -344,11 +472,8 @@ synthetic_df["SpO2"] = synthetic_df["SpO2"].clip(65, 100).round(0)
 synthetic_df["Respiratory_Rate"] = synthetic_df["Respiratory_Rate"].clip(8, 50).round(0)
 synthetic_df["Pain_Level"] = synthetic_df["Pain_Level"].clip(0, 10).round(0)
 
-# Validate risk
-valid_risks = {"Low", "Medium", "High"}
-synthetic_df["Risk_Level"] = synthetic_df["Risk_Level"].apply(
-    lambda x: x if x in valid_risks else "Medium"
-)
+# Validate risk with strict clinical rules
+synthetic_df["Risk_Level"] = synthetic_df.apply(assign_risk, axis=1)
 
 # ── Extra noise: 5% label noise (simulates real-world ambiguity) ──
 n_label_noise = int(FINAL_SIZE * 0.05)

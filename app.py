@@ -1,7 +1,8 @@
 """
-AI-Powered Smart Patient Triage System — REST API Server
+AI-Powered Smart Patient Triage System — REST API Server with Swagger UI
 
 Exposes the ML triage engine as HTTP endpoints for website integration.
+Serves OpenAPI/Swagger documentation at /apidocs/
 
 Endpoints:
   POST /api/triage          — Triage a single patient
@@ -17,6 +18,7 @@ Endpoints:
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+from flasgger import Swagger
 from predict import (
     triage_patient, HospitalQueueManager,
     explain_prediction, find_similar_patients
@@ -25,6 +27,16 @@ import json, os
 
 app = Flask(__name__)
 CORS(app)  # Allow all origins (configure in production)
+
+# Swagger configuration
+app.config['SWAGGER'] = {
+    'title': 'Smart Patient Triage API',
+    'uiversion': 3,
+    'description': 'AI-powered API for patient risk classification, department routing, and priority queue management.',
+    'version': '1.0.0',
+    'specs_route': '/apidocs/'
+}
+swagger = Swagger(app)
 
 # Shared hospital queue (persists while server runs)
 hospital = HospitalQueueManager()
@@ -37,6 +49,22 @@ METADATA_PATH = os.path.join(BASE_DIR, "output", "model_metadata.json")
 
 @app.route("/api/health", methods=["GET"])
 def health():
+    """
+    Health check endpoint
+    ---
+    responses:
+      200:
+        description: Service is healthy
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+              example: ok
+            service:
+              type: string
+              example: triage-ml-engine
+    """
     return jsonify({"status": "ok", "service": "triage-ml-engine"})
 
 
@@ -44,6 +72,30 @@ def health():
 
 @app.route("/api/metadata", methods=["GET"])
 def metadata():
+    """
+    Get model metadata and available classes
+    ---
+    responses:
+      200:
+        description: Model metadata
+        schema:
+          type: object
+          properties:
+            risk_classes:
+              type: array
+              items:
+                type: string
+            department_classes:
+              type: array
+              items:
+                type: string
+            risk_f1:
+              type: number
+            dept_f1:
+              type: number
+            features_count:
+              type: integer
+    """
     try:
         with open(METADATA_PATH) as f:
             meta = json.load(f)
@@ -63,21 +115,81 @@ def metadata():
 @app.route("/api/triage", methods=["POST"])
 def triage():
     """
-    POST JSON body with patient data:
-    {
-        "Patient_ID": "PT-001",
-        "Age": 72,
-        "Gender": "Male",
-        "Symptoms": "Chest Pain, Shortness of Breath",
-        "Blood_Pressure": "185/110",
-        "Heart_Rate": 130,
-        "Temperature": 103.8,
-        "SpO2": 88,
-        "Respiratory_Rate": 32,
-        "Consciousness_Level": "Verbal",
-        "Pain_Level": 9,
-        "Pre_Existing_Conditions": "Heart Disease"
-    }
+    Triage a single patient
+    ---
+    parameters:
+      - in: body
+        name: patient
+        required: true
+        schema:
+          type: object
+          properties:
+            Patient_ID:
+              type: string
+              example: PT-001
+            Age:
+              type: integer
+              example: 72
+            Gender:
+              type: string
+              enum: [Male, Female]
+              example: Male
+            Symptoms:
+              type: string
+              example: Chest Pain, Shortness of Breath
+            Blood_Pressure:
+              type: string
+              example: 185/110
+            Heart_Rate:
+              type: number
+              example: 130
+            Temperature:
+              type: number
+              example: 103.8
+            SpO2:
+              type: number
+              example: 88
+            Respiratory_Rate:
+              type: number
+              example: 32
+            Consciousness_Level:
+              type: string
+              enum: [Alert, Verbal, Pain, Unresponsive]
+              example: Verbal
+            Pain_Level:
+              type: number
+              example: 9
+            Pre_Existing_Conditions:
+              type: string
+              example: Heart Disease
+    responses:
+      200:
+        description: Triage result
+        schema:
+          type: object
+          properties:
+            risk_level:
+              type: string
+              example: High
+            department:
+              type: string
+              example: Cardiology
+            priority_score:
+              type: number
+              example: 87.1
+            confidence:
+              type: number
+              example: 0.91
+            news2_score:
+              type: number
+              example: 13.0
+            needs_escalation:
+              type: boolean
+              example: false
+            risk_probabilities:
+              type: object
+            dept_probabilities:
+              type: object
     """
     data = request.get_json()
     if not data:
@@ -93,7 +205,35 @@ def triage():
 
 @app.route("/api/triage/batch", methods=["POST"])
 def triage_batch():
-    """POST a JSON array of patient objects."""
+    """
+    Triage multiple patients
+    ---
+    parameters:
+      - in: body
+        name: patients
+        required: true
+        schema:
+          type: array
+          items:
+            type: object
+            properties:
+              Patient_ID:
+                type: string
+              Age:
+                type: integer
+    responses:
+      200:
+        description: List of triage results
+        schema:
+          type: object
+          properties:
+            results:
+              type: array
+              items:
+                type: object
+            count:
+              type: integer
+    """
     patients = request.get_json()
     if not patients or not isinstance(patients, list):
         return jsonify({"error": "Expected a JSON array of patients"}), 400
@@ -108,7 +248,29 @@ def triage_batch():
 
 @app.route("/api/queue/admit", methods=["POST"])
 def queue_admit():
-    """Triage + admit patient to department queue."""
+    """
+    Admit patient to department queue
+    ---
+    parameters:
+      - in: body
+        name: patient
+        required: true
+        schema:
+          type: object
+          properties:
+            Patient_ID:
+              type: string
+    responses:
+      200:
+        description: Admission result
+        schema:
+          type: object
+          properties:
+            triage:
+              type: object
+            queue_size:
+              type: integer
+    """
     data = request.get_json()
     if not data:
         return jsonify({"error": "No JSON body provided"}), 400
@@ -126,6 +288,29 @@ def queue_admit():
 
 @app.route("/api/queue/<department>", methods=["GET"])
 def queue_department(department):
+    """
+    Get queue for a department
+    ---
+    parameters:
+      - in: path
+        name: department
+        required: true
+        type: string
+    responses:
+      200:
+        description: Department queue
+        schema:
+          type: object
+          properties:
+            department:
+              type: string
+            patients:
+              type: array
+              items:
+                type: object
+            size:
+              type: integer
+    """
     if department not in hospital.queues:
         return jsonify({"department": department, "patients": [], "size": 0})
     q = hospital.queues[department]
@@ -140,7 +325,20 @@ def queue_department(department):
 
 @app.route("/api/queue/<department>/next", methods=["POST"])
 def queue_next(department):
-    """Pop the highest-priority patient from a department queue."""
+    """
+    Pop next patient from department queue
+    ---
+    parameters:
+      - in: path
+        name: department
+        required: true
+        type: string
+    responses:
+      200:
+        description: Next patient details
+      404:
+        description: Queue empty
+    """
     patient = hospital.get_next(department)
     if patient is None:
         return jsonify({"error": f"No patients in {department} queue"}), 404
@@ -151,6 +349,15 @@ def queue_next(department):
 
 @app.route("/api/queue/summary", methods=["GET"])
 def queue_summary():
+    """
+    Get summary of all queues
+    ---
+    responses:
+      200:
+        description: Summary of all queues
+        schema:
+          type: object
+    """
     summary = {}
     for dept, q in hospital.queues.items():
         summary[dept] = {
@@ -164,7 +371,33 @@ def queue_summary():
 
 @app.route("/api/explain", methods=["POST"])
 def explain():
-    """Get SHAP feature importance for a patient."""
+    """
+    Get SHAP explanation for a prediction
+    ---
+    parameters:
+      - in: body
+        name: patient
+        required: true
+        schema:
+          type: object
+    responses:
+      200:
+        description: Feature importance
+        schema:
+          type: object
+          properties:
+            prediction:
+              type: object
+              properties:
+                risk_level:
+                  type: string
+                confidence:
+                  type: number
+            shap_values:
+              type: object
+            base_value:
+              type: number
+    """
     data = request.get_json()
     if not data:
         return jsonify({"error": "No JSON body provided"}), 400
@@ -179,7 +412,32 @@ def explain():
 
 @app.route("/api/similar", methods=["POST"])
 def similar():
-    """Find similar past patients using KNN."""
+    """
+    Find similar past patients
+    ---
+    parameters:
+      - in: body
+        name: patient
+        required: true
+        schema:
+          type: object
+      - in: query
+        name: n
+        type: integer
+        default: 5
+    responses:
+      200:
+        description: Similar patients
+        schema:
+          type: object
+          properties:
+            query_patient:
+              type: object
+            similar_patients:
+              type: array
+              items:
+                type: object
+    """
     data = request.get_json()
     if not data:
         return jsonify({"error": "No JSON body provided"}), 400
@@ -194,18 +452,8 @@ def similar():
 # ── Run Server ───────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    print("=" * 55)
-    print("  🏥 Triage ML API Server")
-    print("  Endpoints:")
-    print("    POST /api/triage         — Triage patient")
-    print("    POST /api/triage/batch   — Batch triage")
-    print("    POST /api/queue/admit    — Admit to queue")
-    print("    GET  /api/queue/<dept>   — View queue")
-    print("    POST /api/queue/<d>/next — Next patient")
-    print("    GET  /api/queue/summary  — All queues")
-    print("    POST /api/explain        — SHAP explain")
-    print("    POST /api/similar        — Similar patients")
-    print("    GET  /api/health         — Health check")
-    print("    GET  /api/metadata       — Model info")
-    print("=" * 55)
+    print("=" * 65)
+    print("  🏥 Triage ML API Server with Swagger UI")
+    print("  👉 Swagger UI: http://localhost:5001/apidocs/")
+    print("=" * 65)
     app.run(host="0.0.0.0", port=5001, debug=True)

@@ -133,10 +133,12 @@ Risk factors:   NEWS2_Score(+0.755), Temperature(+0.393), Pain_Level(+0.349)
 Protective:     Sym_Cough(-0.283), Respiratory_Rate(-0.155), BP_Systolic(-0.117)
 ```
 
-**REST API** (`app.py` — for website integration):
+**REST API with Swagger UI** (`app.py`):
 
 ```bash
-python app.py   # starts server on port 5001
+python app.py
+# 📖 Swagger UI: http://localhost:5001/apidocs/
+# 🚀 API Base:   http://localhost:5001/api/
 ```
 
 | Method | Endpoint | Description |

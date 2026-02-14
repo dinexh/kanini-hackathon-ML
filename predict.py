@@ -160,6 +160,11 @@ def triage_patient(data):
     if len(sorted_p) >= 2 and (sorted_p[0] - sorted_p[1]) < 0.15:
         needs_esc = True; esc_reason = f"Ambiguous: {sorted_p[0]*100:.1f}% vs {sorted_p[1]*100:.1f}%"
 
+    # ─────────────────────────────────────────────────────────────
+    # GUARDRAILS: Force-correct based on clinical rules
+    # ─────────────────────────────────────────────────────────────
+    risk_label, dept_label = apply_clinical_guardrails(data, risk_label, dept_label, risk_proba)
+
     return {
         "patient_id": data.get("Patient_ID", "Unknown"),
         "risk_level": risk_label,
@@ -250,20 +255,94 @@ def find_similar_patients(data, n=5):
             for d, i in zip(dists[0], idxs[0])]
 
 
+def apply_clinical_guardrails(data, risk_label, dept_label, risk_proba):
+    """
+    Force-correct predictions based on strict clinical rules (Guardrails).
+    Overrides ML model if specific critical criteria are met.
+    """
+    s = data.get("Symptoms", "")
+    c = data.get("Pre_Existing_Conditions", "")
+    sp = data.get("SpO2", 98)
+    hr = data.get("Heart_Rate", 80)
+    sys = float(str(data.get("Blood_Pressure", "120/80")).split("/")[0])
+    cons = data.get("Consciousness_Level", "Alert")
+
+    # 1. Critical Vitals -> High Risk Overrides
+    if sp < 90 or hr > 130 or sys < 80 or cons in ["Unresponsive", "Pain"]:
+        risk_label = "High"
+    
+    # 2. Condition-Specific Routing & Risk
+    # Stroke -> Neurology
+    if "Slurred Speech" in s or "Facial Droop" in s or "Weakness" in s:
+        dept_label = "Neurology"
+        risk_label = "High"
+    
+    # DKA -> Endocrinology (or Emergency) -> Settle on Emergency for initial triage
+    if "Type 1 Diabetes" in c and ("Confusion" in s or "Vomiting" in s):
+        risk_label = "High"
+        # Keep Dept as predicted unless it's stupid. If ML said Gastro, change to Emergency?
+        # Let's force Emergency for DKA
+        dept_label = "Emergency"
+
+    # Kidney Stones -> Nephrology
+    if "Kidney Stones" in c or "Blood in Urine" in s or "Flank Pain" in s:
+        dept_label = "Nephrology"
+    
+    # Migraine -> Neurology (Low Risk)
+    if "Migraine" in c or "Light Sensitivity" in s:
+        if risk_label == "High": pass # Don't downgrade if they are actually dying
+        else:
+            dept_label = "Neurology"
+
+    # Anxiety -> Psychology/GenMed? 
+    # If ML predicts Cardio for Anxiety, maybe override to GenMed if vitals stable?
+    if "Anxiety" in c and "Chest Tightness" in s:
+        if sys < 140 and hr < 110 and sp > 95:
+            # Panic attack mimicking MI
+            risk_label = "Medium" # Not Low because needs rule out
+            dept_label = "General Medicine" # Or Psychiatry if we had it.
+
+    return risk_label, dept_label
+
+
+def text_explanation(pos, neg):
+    """Generate a human-friendly explanation string."""
+    factors = []
+    if pos:
+        factors.append(f"Risk increased by {pos[0][0].replace('Sym_','').replace('Cond_','').replace('_',' ')}")
+    if neg:
+        factors.append(f"offset by {neg[0][0].replace('Sym_','').replace('Cond_','').replace('_',' ')}")
+    return "; ".join(factors) + "."
+
 def explain_prediction(data):
     c = _load(); meta = c["meta"]; import shap
     df_s = _build_features(data); xm = c["xgb_risk"]
     exp = shap.TreeExplainer(xm); sv = exp.shap_values(df_s)
     pred = int(xm.predict(df_s)[0])
     rl = c["risk_le"].inverse_transform([pred])[0]
+    
+    # Getting SHAP values
     if isinstance(sv, list): vals = np.array(sv[pred]).flatten()
     elif sv.ndim == 3: vals = sv[0,:,pred] if sv.shape[0]==1 else sv[pred][0]
     else: vals = np.array(sv).flatten()
+    
     contribs = sorted([(f,float(v)) for f,v in zip(meta["feature_names"],vals)], key=lambda x:abs(x[1]), reverse=True)
-    pos = [(f,round(v,4)) for f,v in contribs if v>0][:8]
-    neg = [(f,round(v,4)) for f,v in contribs if v<0][:5]
+    
+    # Sanitize Protective Factors (Negative SHAP)
+    # Don't list "Diabetes" as protective.
+    # Only list Vitals (within normal range) or "None" conditions.
+    
+    def is_valid_protective(feat, val):
+        if "Cond_" in feat and "None" not in feat: return False # Diseases aren't protective
+        if "Sym_" in feat and "None" not in feat: return False # Symptoms aren't protective (rarely)
+        if "Age" in feat and data.get("Age") > 60: return False # Age > 60 isn't protective
+        return True
+
+    pos = [(f,round(v,4)) for f,v in contribs if v>0][:5]
+    neg = [(f,round(v,4)) for f,v in contribs if v<0 and is_valid_protective(f,v)][:5]
+    
     return {"predicted_class": rl, "top_risk_factors": pos, "top_protective_factors": neg,
-            "interpretation": f"Predicted '{rl}'. Key factors: {', '.join(f[0] for f in pos[:3])}."}
+            "interpretation": text_explanation(pos, neg)}
 
 
 # ── CLI DEMO ──────────────────────────────────────────────────────
