@@ -141,12 +141,12 @@ Risk factors:   NEWS2_Score(+0.755), Temperature(+0.393), Pain_Level(+0.349)
 Protective:     Sym_Cough(-0.283), Respiratory_Rate(-0.155), BP_Systolic(-0.117)
 ```
 
-**REST API with Swagger UI** (`app.py`):
+**FastAPI Server with Swagger UI** (`main.py`):
 
 ```bash
-python app.py
-# 📖 Swagger UI: http://localhost:5001/apidocs/
-# 🚀 API Base:   http://localhost:5001/api/
+uvicorn main:app --reload
+# 📖 Swagger UI: http://localhost:8000/docs
+# 🚀 API Base:   http://localhost:8000
 ```
 
 | Method | Endpoint | Description |
@@ -165,7 +165,8 @@ python app.py
 **Example request:**
 
 ```bash
-curl -X POST http://localhost:5001/api/triage \
+```bash
+curl -X POST http://localhost:8000/triage \
   -H "Content-Type: application/json" \
   -d '{
     "Patient_ID": "PT-001", "Age": 72, "Gender": "Male",
@@ -199,7 +200,7 @@ curl -X POST http://localhost:5001/api/triage \
 ├── generate_dataset.py    # CTGAN synthetic data + noise injection
 ├── train_model.py         # Dual-model training (Risk + Dept)
 ├── predict.py             # Prediction engine + SHAP + priority queue
-├── app.py                 # Flask REST API (website integration)
+├── main.py                # FastAPI REST API (web integration)
 ├── data/
 │   └── patient_triage_dataset.csv
 └── output/
@@ -227,7 +228,7 @@ python train_model.py        # Train Risk + Dept models
 python predict.py            # Run triage demo
 
 # 3. Start API server (for website integration)
-python app.py                # http://localhost:5001
+uvicorn main:app --reload    # http://localhost:8000/docs
 ```
 
 ---
