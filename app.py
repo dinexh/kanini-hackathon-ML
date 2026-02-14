@@ -380,23 +380,59 @@ def explain():
         required: true
         schema:
           type: object
+          properties:
+            Patient_ID:
+              type: string
+              example: PT-1001
+            Age:
+              type: integer
+              example: 65
+            Gender:
+              type: string
+              enum: [Male, Female]
+              example: Male
+            Symptoms:
+              type: string
+              example: Chest Pain, Shortness of Breath
+            Blood_Pressure:
+              type: string
+              example: 180/110
+            Heart_Rate:
+              type: number
+              example: 135
+            Temperature:
+              type: number
+              example: 99.2
+            SpO2:
+              type: number
+              example: 88
+            Respiratory_Rate:
+              type: number
+              example: 32
+            Consciousness_Level:
+              type: string
+              enum: [Alert, Verbal, Pain, Unresponsive]
+              example: Pain
+            Pain_Level:
+              type: number
+              example: 9
+            Pre_Existing_Conditions:
+              type: string
+              example: Hypertension, Diabetes
     responses:
       200:
         description: Feature importance
         schema:
           type: object
           properties:
-            prediction:
-              type: object
-              properties:
-                risk_level:
-                  type: string
-                confidence:
-                  type: number
-            shap_values:
-              type: object
-            base_value:
-              type: number
+            predicted_class:
+              type: string
+            top_risk_factors:
+              type: array
+            top_protective_factors:
+              type: array
+            interpretation:
+              type: string
     """
     data = request.get_json()
     if not data:

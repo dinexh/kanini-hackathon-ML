@@ -142,6 +142,8 @@ def assign_risk(row):
     if spo2 < 90: return "High"
     if hr > 130 or hr < 40: return "High"
     if bp_sys > 200 or bp_sys < 80: return "High"  # Hypotension is HIGH risk
+    if rr > 30 or rr < 8: return "High"            # Severe respiratory distress
+    if row.get("Pain_Level", 0) >= 9: return "High" # Extreme pain
     if "Chest Pain" in s and "Heart Disease" in c: return "High"
     if "Slurred Speech" in s: return "High"        # Stroke
     if "Seizures" in s: return "High"
@@ -475,31 +477,9 @@ synthetic_df["Pain_Level"] = synthetic_df["Pain_Level"].clip(0, 10).round(0)
 # Validate risk with strict clinical rules
 synthetic_df["Risk_Level"] = synthetic_df.apply(assign_risk, axis=1)
 
-# ── Extra noise: 5% label noise (simulates real-world ambiguity) ──
-n_label_noise = int(FINAL_SIZE * 0.05)
-noise_idx = np.random.choice(FINAL_SIZE, n_label_noise, replace=False)
-for idx in noise_idx:
-    current = synthetic_df.at[idx, "Risk_Level"]
-    # Swap to adjacent class (High↔Medium, Medium↔Low)
-    if current == "High":
-        synthetic_df.at[idx, "Risk_Level"] = "Medium"
-    elif current == "Low":
-        synthetic_df.at[idx, "Risk_Level"] = "Medium"
-    else:
-        synthetic_df.at[idx, "Risk_Level"] = np.random.choice(["High", "Low"])
-print(f"   Applied 5% label noise ({n_label_noise} patients)")
+print(f"   Applied strict clinical rules to all {FINAL_SIZE} patients")
 
-# ── Extra noise: 3% random vital perturbation ──
-n_vital_noise = int(FINAL_SIZE * 0.03)
-vn_idx = np.random.choice(FINAL_SIZE, n_vital_noise, replace=False)
-for idx in vn_idx:
-    synthetic_df.at[idx, "Heart_Rate"] = np.clip(
-        synthetic_df.at[idx, "Heart_Rate"] + np.random.normal(0, 25), 40, 200
-    )
-    synthetic_df.at[idx, "SpO2"] = np.clip(
-        synthetic_df.at[idx, "SpO2"] + np.random.normal(0, 5), 65, 100
-    )
-print(f"   Applied 3% vital perturbation ({n_vital_noise} patients)")
+# (Removed label noise and vital perturbation to ensure strict annotations)
 
 # ── Department: clinical routing ──
 def assign_dept(row):

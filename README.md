@@ -20,8 +20,8 @@ Patient Data Input (Age, Vitals, Symptoms, Conditions)
        ▼                       ▼
 ┌────────────────┐   ┌────────────────┐
 │  RISK MODEL     │   │  DEPT MODEL    │
-│  Random Forest  │   │  XGBoost       │
-│  F1 = 0.7453    │   │  F1 = 0.9860   │
+│  Stacking Ens.  │   │  XGBoost       │
+│  F1 = 0.99      │   │  F1 = 0.99     │
 │  Low/Med/High   │   │  10 Departments│
 └───────┬────────┘   └───────┬────────┘
         │                     │
@@ -37,6 +37,14 @@ Patient Data Input (Age, Vitals, Symptoms, Conditions)
 │  PRIORITY QUEUE                               │
 │  NEWS2 score + weighted priority (0-100)      │
 │  Patients sorted by severity per department   │
+└──────────────────────────────────────────────┘
+                   │
+       ┌───────────┴───────────┐
+       ▼                       ▼
+┌──────────────────────────────────────────────┐
+│  CLINICAL GUARDRAILS                          │
+│  Overrides ML for critical rules              │
+│  (e.g. Stroke -> Neuro, DKA -> Emergency)     │
 └──────────────────────────────────────────────┘
 ```
 
@@ -85,8 +93,8 @@ Trains **two models** on the CTGAN-generated data:
 
 | Model | Task | Algorithm | F1 Score | Accuracy |
 |-------|------|-----------|----------|----------|
-| **Risk Classifier** | Low / Medium / High | Random Forest (best of 5 models) | **0.7453** | 76% |
-| **Dept Classifier** | 10 departments | XGBoost | **0.9860** | 99% |
+| **Risk Classifier** | Low / Medium / High | Stacking Ensemble | **0.9910** | 99% |
+| **Dept Classifier** | 10 departments | XGBoost | **0.9940** | 99% |
 
 **Risk model details:**
 - Trains 5 models: Logistic Regression, Decision Tree, Random Forest, XGBoost, Stacking Ensemble

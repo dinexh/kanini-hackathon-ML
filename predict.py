@@ -161,9 +161,69 @@ def triage_patient(data):
         needs_esc = True; esc_reason = f"Ambiguous: {sorted_p[0]*100:.1f}% vs {sorted_p[1]*100:.1f}%"
 
     # ─────────────────────────────────────────────────────────────
-    # GUARDRAILS: Force-correct based on clinical rules
+    # RULE-BASED FALLBACK: If ML is uncertain or contradicts safety
     # ─────────────────────────────────────────────────────────────
-    risk_label, dept_label = apply_clinical_guardrails(data, risk_label, dept_label, risk_proba)
+    
+    # 1. Calculate clinical truth (Rule-Based)
+    def rule_based_logic(row):
+        # Re-using the exact logic from data generation for consistency
+        s = row.get("Symptoms", ""); c = row.get("Pre_Existing_Conditions", "")
+        cons = row.get("Consciousness_Level", "Alert"); spo2 = row.get("SpO2", 96)
+        hr = row.get("Heart_Rate", 80); rr = row.get("Respiratory_Rate", 18)
+        bp_sys = int(str(row.get("Blood_Pressure", "120/80")).split("/")[0])
+        
+        # Risk Rules (Vitals)
+        rb_risk = "Low"
+        if cons in ["Unresponsive", "Pain"] or spo2 < 90 or hr > 130 or bp_sys < 80 or rr > 30 or row.get("Pain_Level",0)>=9:
+            rb_risk = "High"
+        elif spo2 < 94 or hr >= 110 or rr > 24:
+            rb_risk = "Medium"
+
+        # Critical Symptom Rules (Overrides Low/Medium)
+        if "Slurred Speech" in s or "Facial Droop" in s or "Weakness" in s: 
+            rb_risk = "High"; rb_dept = "Neurology"
+        elif "Confusion" in s and "Diabetes" in c:
+            rb_risk = "High"; rb_dept = "Emergency"
+        elif "Chest Pain" in s and "Heart" in c:
+            rb_risk = "High"; rb_dept = "Cardiology"
+        elif "Seizures" in s:
+            rb_risk = "High"; rb_dept = "Emergency"
+            
+        # Dept Rules (General)
+        rb_dept = "General Medicine"
+        if "Chest Pain" in s or "Heart" in c: rb_dept = "Cardiology"
+        elif "Stroke" in s or "Slurred" in s or "Weakness" in s: rb_dept = "Neurology"
+        elif "Abdominal" in s: rb_dept = "Gastroenterology"
+        elif "Kidney" in c or "Flank" in s: rb_dept = "Nephrology"
+        elif "Migraine" in c or "Headache" in s: rb_dept = "Neurology"
+        elif "Anxiety" in c: rb_dept = "General Medicine"
+
+        # Safety catch: If High Risk but Dept is GenMed -> Emergency
+        if rb_risk == "High" and rb_dept == "General Medicine": rb_dept = "Emergency"
+        
+        return rb_risk, rb_dept
+
+    rb_risk, rb_dept = rule_based_logic(data)
+    
+    # 2. Compare ML vs Rule
+    # Strict Override: If Rules say High Risk, FORCE IT.
+    if rb_risk == "High" and risk_label != "High":
+        print(f"⚠️ SAFETY OVERRIDE: ML={risk_label} -> Rule=High")
+        risk_label = "High"
+        department = rb_dept # Also force department if critical
+        dept_label = rb_dept
+        confidence = 1.0
+        
+    # Dept Override: If Rules say specialized dept (e.g. Neuro), trust it over GenMed
+    if rb_dept != "General Medicine" and dept_label == "General Medicine":
+        dept_label = rb_dept
+    
+    # Low Confidence Fallback
+    if confidence < 0.70:
+        print(f"⚠️ LOW CONFIDENCE: {confidence:.2f} -> Fallback to Rules")
+        risk_label = rb_risk
+        dept_label = rb_dept
+        confidence = 0.85
 
     return {
         "patient_id": data.get("Patient_ID", "Unknown"),
@@ -371,7 +431,7 @@ if __name__ == "__main__":
         {"Patient_ID":"PT-10005","Age":65,"Gender":"Male","Symptoms":"Confusion, Headache, Dizziness",
          "Blood_Pressure":"160/95","Heart_Rate":88,"Temperature":98.8,"SpO2":95,
          "Respiratory_Rate":18,"Consciousness_Level":"Verbal","Pain_Level":7,
-         "Pre_Existing_Conditions":"Hypertension, Stroke History"},
+         "Pre_Existing_Conditions":"Hypertension, Previous Stroke"},
     ]
 
     # Create hospital queue manager

@@ -1,0 +1,876 @@
+[
+  {
+    "case_description": "High Risk - Possible Heart Attack",
+    "input": {
+      "Patient_ID": "PT-1001",
+      "Age": 65,
+      "Gender": "Male",
+      "Symptoms": "Chest Pain, Shortness of Breath, Sweating",
+      "Blood_Pressure": "180/110",
+      "Heart_Rate": 135,
+      "Temperature": 99.2,
+      "SpO2": 88,
+      "Respiratory_Rate": 32,
+      "Consciousness_Level": "Pain",
+      "Pain_Level": 9,
+      "Pre_Existing_Conditions": "Hypertension, Diabetes"
+    },
+    "prediction_summary": {
+      "risk_level": "High",
+      "department": "Emergency",
+      "priority_score": 85.7,
+      "model_confidence": "100.0%",
+      "escalation_alert": false
+    },
+    "ml_analysis": {
+      "top_risk_drivers": [
+        [
+          "Pain_Level",
+          2.0864
+        ],
+        [
+          "Respiratory_Rate",
+          1.6039
+        ],
+        [
+          "SpO2",
+          1.2174
+        ],
+        [
+          "Heart_Rate",
+          1.1033
+        ],
+        [
+          "Oxy_Stress",
+          0.5025
+        ]
+      ],
+      "protective_factors": [
+        [
+          "Symptom_Count",
+          -0.1126
+        ],
+        [
+          "Temperature",
+          -0.0815
+        ],
+        [
+          "Gender",
+          -0.0305
+        ],
+        [
+          "Modified_Shock_Index",
+          -0.0282
+        ],
+        [
+          "Symptom_Severity",
+          -0.0164
+        ]
+      ],
+      "clinical_severity_score_news2": 12.0
+    },
+    "clinical_reasoning": [
+      "Hypoxia (SpO2 88%) is a primary driver for High Risk.",
+      "NEWS2 Score (12.0) implies critical condition needing urgent review."
+    ]
+  },
+  {
+    "case_description": "Low Risk - URI / Mild Flu",
+    "input": {
+      "Patient_ID": "PT-1002",
+      "Age": 24,
+      "Gender": "Female",
+      "Symptoms": "Cough, Sore Throat, Mild Fever",
+      "Blood_Pressure": "118/75",
+      "Heart_Rate": 78,
+      "Temperature": 100.4,
+      "SpO2": 98,
+      "Respiratory_Rate": 16,
+      "Consciousness_Level": "Alert",
+      "Pain_Level": 2,
+      "Pre_Existing_Conditions": "None"
+    },
+    "prediction_summary": {
+      "risk_level": "Low",
+      "department": "General Medicine",
+      "priority_score": 7.0,
+      "model_confidence": "99.9%",
+      "escalation_alert": false
+    },
+    "ml_analysis": {
+      "top_risk_drivers": [
+        [
+          "SpO2",
+          0.8021
+        ],
+        [
+          "Consciousness_Level",
+          0.7216
+        ],
+        [
+          "NEWS2_Score",
+          0.6111
+        ],
+        [
+          "Heart_Rate",
+          0.3736
+        ],
+        [
+          "Pain_Level",
+          0.373
+        ]
+      ],
+      "protective_factors": [
+        [
+          "Modified_Shock_Index",
+          -0.1409
+        ],
+        [
+          "Shock_Index",
+          -0.062
+        ],
+        [
+          "Oxy_Stress",
+          -0.0102
+        ],
+        [
+          "Condition_Count",
+          -0.0039
+        ],
+        [
+          "Gender",
+          -0.0037
+        ]
+      ],
+      "clinical_severity_score_news2": 0.0
+    },
+    "clinical_reasoning": []
+  },
+  {
+    "case_description": "Medium Risk - Gastroenteritis",
+    "input": {
+      "Patient_ID": "PT-1003",
+      "Age": 45,
+      "Gender": "Male",
+      "Symptoms": "Abdominal Pain, Vomiting, Nausea",
+      "Blood_Pressure": "130/85",
+      "Heart_Rate": 92,
+      "Temperature": 99.5,
+      "SpO2": 96,
+      "Respiratory_Rate": 20,
+      "Consciousness_Level": "Alert",
+      "Pain_Level": 6,
+      "Pre_Existing_Conditions": "None"
+    },
+    "prediction_summary": {
+      "risk_level": "Low",
+      "department": "Gastroenterology",
+      "priority_score": 8.4,
+      "model_confidence": "99.8%",
+      "escalation_alert": false
+    },
+    "ml_analysis": {
+      "top_risk_drivers": [
+        [
+          "SpO2",
+          0.7858
+        ],
+        [
+          "Consciousness_Level",
+          0.7161
+        ],
+        [
+          "BP_Systolic",
+          0.5846
+        ],
+        [
+          "NEWS2_Score",
+          0.5451
+        ],
+        [
+          "Heart_Rate",
+          0.4379
+        ]
+      ],
+      "protective_factors": [
+        [
+          "BP_Diastolic",
+          -0.1679
+        ],
+        [
+          "Temperature",
+          -0.1295
+        ],
+        [
+          "Shock_Index",
+          -0.0183
+        ],
+        [
+          "Fever_Hypoxia",
+          -0.0042
+        ],
+        [
+          "Symptom_Severity",
+          -0.0026
+        ]
+      ],
+      "clinical_severity_score_news2": 1.0
+    },
+    "clinical_reasoning": []
+  },
+  {
+    "case_description": "High Risk - Septic Shock",
+    "input": {
+      "Patient_ID": "PT-1004",
+      "Age": 72,
+      "Gender": "Female",
+      "Symptoms": "Fever, Confusion, Shivering",
+      "Blood_Pressure": "85/50",
+      "Heart_Rate": 145,
+      "Temperature": 103.5,
+      "SpO2": 89,
+      "Respiratory_Rate": 28,
+      "Consciousness_Level": "Verbal",
+      "Pain_Level": 4,
+      "Pre_Existing_Conditions": "UTI"
+    },
+    "prediction_summary": {
+      "risk_level": "High",
+      "department": "Emergency",
+      "priority_score": 92.6,
+      "model_confidence": "100.0%",
+      "escalation_alert": false
+    },
+    "ml_analysis": {
+      "top_risk_drivers": [
+        [
+          "SpO2",
+          2.4911
+        ],
+        [
+          "Heart_Rate",
+          2.2836
+        ],
+        [
+          "Consciousness_Level",
+          0.703
+        ],
+        [
+          "Sym_Confusion",
+          0.3313
+        ],
+        [
+          "Hemodynamic_Instability",
+          0.2146
+        ]
+      ],
+      "protective_factors": [
+        [
+          "Pain_Level",
+          -0.3537
+        ],
+        [
+          "Temperature",
+          -0.1859
+        ],
+        [
+          "Respiratory_Rate",
+          -0.1743
+        ],
+        [
+          "Symptom_Count",
+          -0.1559
+        ],
+        [
+          "Oxy_Stress",
+          -0.0893
+        ]
+      ],
+      "clinical_severity_score_news2": 17.0
+    },
+    "clinical_reasoning": [
+      "Hypoxia (SpO2 89%) is a primary driver for High Risk.",
+      "NEWS2 Score (17.0) implies critical condition needing urgent review."
+    ]
+  },
+  {
+    "case_description": "Low Risk - Migraine Disorder",
+    "input": {
+      "Patient_ID": "PT-1005",
+      "Age": 30,
+      "Gender": "Female",
+      "Symptoms": "Severe Headache, Light Sensitivity, Nausea",
+      "Blood_Pressure": "120/80",
+      "Heart_Rate": 75,
+      "Temperature": 98.6,
+      "SpO2": 99,
+      "Respiratory_Rate": 16,
+      "Consciousness_Level": "Alert",
+      "Pain_Level": 8,
+      "Pre_Existing_Conditions": "Migraine Disorder"
+    },
+    "prediction_summary": {
+      "risk_level": "Low",
+      "department": "Neurology",
+      "priority_score": 7.0,
+      "model_confidence": "99.8%",
+      "escalation_alert": false
+    },
+    "ml_analysis": {
+      "top_risk_drivers": [
+        [
+          "SpO2",
+          0.7097
+        ],
+        [
+          "Consciousness_Level",
+          0.7096
+        ],
+        [
+          "NEWS2_Score",
+          0.5697
+        ],
+        [
+          "Heart_Rate",
+          0.4599
+        ],
+        [
+          "Age",
+          0.2941
+        ]
+      ],
+      "protective_factors": [
+        [
+          "Symptom_Count",
+          -0.0592
+        ],
+        [
+          "Pain_Level",
+          -0.0299
+        ],
+        [
+          "Gender",
+          -0.0051
+        ],
+        [
+          "Fever_Hypoxia",
+          -0.0042
+        ]
+      ],
+      "clinical_severity_score_news2": 0.0
+    },
+    "clinical_reasoning": []
+  },
+  {
+    "case_description": "High Risk - Stroke",
+    "input": {
+      "Patient_ID": "PT-1006",
+      "Age": 68,
+      "Gender": "Male",
+      "Symptoms": "Slurred Speech, Facial Droop, Weakness",
+      "Blood_Pressure": "190/100",
+      "Heart_Rate": 90,
+      "Temperature": 98.7,
+      "SpO2": 96,
+      "Respiratory_Rate": 18,
+      "Consciousness_Level": "Alert",
+      "Pain_Level": 0,
+      "Pre_Existing_Conditions": "Previous Stroke"
+    },
+    "prediction_summary": {
+      "risk_level": "High",
+      "department": "Neurology",
+      "priority_score": 29.0,
+      "model_confidence": "97.7%",
+      "escalation_alert": false
+    },
+    "ml_analysis": {
+      "top_risk_drivers": [
+        [
+          "BP_Systolic",
+          1.7879
+        ],
+        [
+          "Consciousness_Level",
+          0.5208
+        ],
+        [
+          "Hemodynamic_Instability",
+          0.4999
+        ],
+        [
+          "Heart_Rate",
+          0.3515
+        ],
+        [
+          "Pain_Level",
+          0.344
+        ]
+      ],
+      "protective_factors": [
+        [
+          "Symptom_Severity",
+          -0.5013
+        ],
+        [
+          "Symptom_Count",
+          -0.3278
+        ],
+        [
+          "SpO2",
+          -0.2668
+        ],
+        [
+          "Temperature",
+          -0.1521
+        ],
+        [
+          "Fever_Hypoxia",
+          -0.0061
+        ]
+      ],
+      "clinical_severity_score_news2": 0.0
+    },
+    "clinical_reasoning": []
+  },
+  {
+    "case_description": "Medium Risk - Anxiety Disorder",
+    "input": {
+      "Patient_ID": "PT-1007",
+      "Age": 28,
+      "Gender": "Male",
+      "Symptoms": "Chest Tightness, Palpitations, Dizziness",
+      "Blood_Pressure": "135/85",
+      "Heart_Rate": 110,
+      "Temperature": 98.4,
+      "SpO2": 99,
+      "Respiratory_Rate": 22,
+      "Consciousness_Level": "Alert",
+      "Pain_Level": 2,
+      "Pre_Existing_Conditions": "Anxiety Disorder"
+    },
+    "prediction_summary": {
+      "risk_level": "Low",
+      "department": "Neurology",
+      "priority_score": 14.2,
+      "model_confidence": "99.1%",
+      "escalation_alert": false
+    },
+    "ml_analysis": {
+      "top_risk_drivers": [
+        [
+          "Consciousness_Level",
+          0.7123
+        ],
+        [
+          "NEWS2_Score",
+          0.5543
+        ],
+        [
+          "SpO2",
+          0.5173
+        ],
+        [
+          "Pain_Level",
+          0.4334
+        ],
+        [
+          "BP_Systolic",
+          0.4143
+        ]
+      ],
+      "protective_factors": [
+        [
+          "Hemodynamic_Instability",
+          -0.2597
+        ],
+        [
+          "BP_Diastolic",
+          -0.204
+        ],
+        [
+          "Symptom_Count",
+          -0.1549
+        ],
+        [
+          "Shock_Index",
+          -0.1484
+        ],
+        [
+          "Modified_Shock_Index",
+          -0.111
+        ]
+      ],
+      "clinical_severity_score_news2": 3.0
+    },
+    "clinical_reasoning": []
+  },
+  {
+    "case_description": "High Risk - DKA",
+    "input": {
+      "Patient_ID": "PT-1008",
+      "Age": 22,
+      "Gender": "Female",
+      "Symptoms": "Confusion, Vomiting, Fruity Breath",
+      "Blood_Pressure": "100/60",
+      "Heart_Rate": 125,
+      "Temperature": 99.0,
+      "SpO2": 95,
+      "Respiratory_Rate": 36,
+      "Consciousness_Level": "Verbal",
+      "Pain_Level": 5,
+      "Pre_Existing_Conditions": "Type 1 Diabetes"
+    },
+    "prediction_summary": {
+      "risk_level": "High",
+      "department": "Emergency",
+      "priority_score": 67.3,
+      "model_confidence": "99.9%",
+      "escalation_alert": false
+    },
+    "ml_analysis": {
+      "top_risk_drivers": [
+        [
+          "Respiratory_Rate",
+          3.9267
+        ],
+        [
+          "Oxy_Stress",
+          1.3098
+        ],
+        [
+          "Sym_Confusion",
+          0.6439
+        ],
+        [
+          "Consciousness_Level",
+          0.5477
+        ],
+        [
+          "Age",
+          0.305
+        ]
+      ],
+      "protective_factors": [
+        [
+          "Symptom_Count",
+          -0.2454
+        ],
+        [
+          "Heart_Rate",
+          -0.2209
+        ],
+        [
+          "Temperature",
+          -0.0895
+        ],
+        [
+          "SpO2",
+          -0.0852
+        ],
+        [
+          "BP_Diastolic",
+          -0.0839
+        ]
+      ],
+      "clinical_severity_score_news2": 11.0
+    },
+    "clinical_reasoning": [
+      "NEWS2 Score (11.0) implies critical condition needing urgent review."
+    ]
+  },
+  {
+    "case_description": "Low Risk - Kidney Stones",
+    "input": {
+      "Patient_ID": "PT-1009",
+      "Age": 40,
+      "Gender": "Male",
+      "Symptoms": "Severe Flank Pain, Blood in Urine",
+      "Blood_Pressure": "140/90",
+      "Heart_Rate": 100,
+      "Temperature": 98.9,
+      "SpO2": 98,
+      "Respiratory_Rate": 20,
+      "Consciousness_Level": "Alert",
+      "Pain_Level": 9,
+      "Pre_Existing_Conditions": "History of Stones"
+    },
+    "prediction_summary": {
+      "risk_level": "High",
+      "department": "Nephrology",
+      "priority_score": 44.4,
+      "model_confidence": "99.9%",
+      "escalation_alert": false
+    },
+    "ml_analysis": {
+      "top_risk_drivers": [
+        [
+          "Pain_Level",
+          7.8777
+        ],
+        [
+          "Symptom_Count",
+          0.5511
+        ],
+        [
+          "Shock_Index",
+          0.0593
+        ],
+        [
+          "BP_Diastolic",
+          0.0545
+        ],
+        [
+          "NEWS2_Score",
+          0.0442
+        ]
+      ],
+      "protective_factors": [
+        [
+          "Consciousness_Level",
+          -0.4885
+        ],
+        [
+          "SpO2",
+          -0.4229
+        ],
+        [
+          "Heart_Rate",
+          -0.1897
+        ],
+        [
+          "Respiratory_Rate",
+          -0.1442
+        ],
+        [
+          "Age",
+          -0.1082
+        ]
+      ],
+      "clinical_severity_score_news2": 1.0
+    },
+    "clinical_reasoning": []
+  },
+  {
+    "case_description": "Medium Risk - Pneumonia",
+    "input": {
+      "Patient_ID": "PT-1010",
+      "Age": 55,
+      "Gender": "Female",
+      "Symptoms": "Productive Cough, Fever, Shortness of Breath",
+      "Blood_Pressure": "125/80",
+      "Heart_Rate": 98,
+      "Temperature": 101.5,
+      "SpO2": 93,
+      "Respiratory_Rate": 24,
+      "Consciousness_Level": "Alert",
+      "Pain_Level": 3,
+      "Pre_Existing_Conditions": "Smoker"
+    },
+    "prediction_summary": {
+      "risk_level": "Medium",
+      "department": "General Medicine",
+      "priority_score": 35.3,
+      "model_confidence": "99.9%",
+      "escalation_alert": false
+    },
+    "ml_analysis": {
+      "top_risk_drivers": [
+        [
+          "SpO2",
+          1.327
+        ],
+        [
+          "Sym_Shortness_of_Breath",
+          1.0396
+        ],
+        [
+          "Heart_Rate",
+          0.3547
+        ],
+        [
+          "NEWS2_Score",
+          0.2231
+        ],
+        [
+          "Oxy_Stress",
+          0.17
+        ]
+      ],
+      "protective_factors": [
+        [
+          "Hemodynamic_Instability",
+          -0.1913
+        ],
+        [
+          "BP_Systolic",
+          -0.1781
+        ],
+        [
+          "Temperature",
+          -0.1533
+        ],
+        [
+          "Age",
+          -0.0721
+        ],
+        [
+          "Gender",
+          -0.0512
+        ]
+      ],
+      "clinical_severity_score_news2": 6.0
+    },
+    "clinical_reasoning": [
+      "NEWS2 Score (6.0) suggests potential deterioration."
+    ]
+  },
+  {
+    "case_description": "High Risk - Severe Trauma",
+    "input": {
+      "Patient_ID": "PT-1011",
+      "Age": 33,
+      "Gender": "Male",
+      "Symptoms": "Severe Pain, Bleeding, Deformity",
+      "Blood_Pressure": "110/70",
+      "Heart_Rate": 120,
+      "Temperature": 98.2,
+      "SpO2": 97,
+      "Respiratory_Rate": 26,
+      "Consciousness_Level": "Pain",
+      "Pain_Level": 10,
+      "Pre_Existing_Conditions": "None"
+    },
+    "prediction_summary": {
+      "risk_level": "High",
+      "department": "Neurology",
+      "priority_score": 64.5,
+      "model_confidence": "100.0%",
+      "escalation_alert": false
+    },
+    "ml_analysis": {
+      "top_risk_drivers": [
+        [
+          "Pain_Level",
+          5.7974
+        ],
+        [
+          "Symptom_Count",
+          1.3105
+        ],
+        [
+          "Consciousness_Level",
+          0.7584
+        ],
+        [
+          "Sym_Fever",
+          0.0611
+        ],
+        [
+          "Sym_Nausea",
+          0.0305
+        ]
+      ],
+      "protective_factors": [
+        [
+          "SpO2",
+          -0.5033
+        ],
+        [
+          "Hemodynamic_Instability",
+          -0.3218
+        ],
+        [
+          "Oxy_Stress",
+          -0.2092
+        ],
+        [
+          "Respiratory_Rate",
+          -0.1778
+        ],
+        [
+          "BP_Diastolic",
+          -0.1629
+        ]
+      ],
+      "clinical_severity_score_news2": 9.0
+    },
+    "clinical_reasoning": [
+      "NEWS2 Score (9.0) implies critical condition needing urgent review."
+    ]
+  },
+  {
+    "case_description": "Medium Risk - Asthma Exacerbation",
+    "input": {
+      "Patient_ID": "PT-1012",
+      "Age": 17,
+      "Gender": "Male",
+      "Symptoms": "Wheezing, Tightness",
+      "Blood_Pressure": "128/76",
+      "Heart_Rate": 115,
+      "Temperature": 98.6,
+      "SpO2": 94,
+      "Respiratory_Rate": 28,
+      "Consciousness_Level": "Alert",
+      "Pain_Level": 1,
+      "Pre_Existing_Conditions": "Asthma"
+    },
+    "prediction_summary": {
+      "risk_level": "Medium",
+      "department": "General Medicine",
+      "priority_score": 34.3,
+      "model_confidence": "96.6%",
+      "escalation_alert": false
+    },
+    "ml_analysis": {
+      "top_risk_drivers": [
+        [
+          "Heart_Rate",
+          1.718
+        ],
+        [
+          "Pain_Level",
+          0.4681
+        ],
+        [
+          "Cond_Asthma",
+          0.326
+        ],
+        [
+          "Shock_Index",
+          0.2014
+        ],
+        [
+          "Consciousness_Level",
+          0.1537
+        ]
+      ],
+      "protective_factors": [
+        [
+          "Symptom_Count",
+          -0.6977
+        ],
+        [
+          "Symptom_Severity",
+          -0.4322
+        ],
+        [
+          "BP_Systolic",
+          -0.1755
+        ],
+        [
+          "Oxy_Stress",
+          -0.1369
+        ],
+        [
+          "Temperature",
+          -0.1232
+        ]
+      ],
+      "clinical_severity_score_news2": 6.0
+    },
+    "clinical_reasoning": [
+      "NEWS2 Score (6.0) suggests potential deterioration."
+    ]
+  }
+]
