@@ -1,342 +1,341 @@
 """
-AI-Powered Smart Patient Triage System — Advanced Prediction Module (v3)
+AI-Powered Smart Patient Triage System — Prediction + Priority Queue (v4)
 
-UNIQUE CAPABILITIES:
-  1. predict_risk()     → Risk level + confidence + probabilities
-  2. Triage escalation  → Flags uncertain cases for doctor review
-  3. find_similar()     → Finds similar past patients (KNN)
-  4. explain_prediction() → Per-patient SHAP explanation
-
-Accepts the same simple input format as the user's sample.
+API:
+  triage_patient(data)       → risk + department + priority score + queue position
+  find_similar_patients(data)→ similar past patients (KNN)
+  explain_prediction(data)   → SHAP explanation
+  PatientQueue               → priority queue manager for a department
 """
 
-import os
-import json
-import pickle
-import numpy as np
-import pandas as pd
+import os, json, pickle, heapq, numpy as np, pandas as pd
+from datetime import datetime
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(BASE_DIR, "output")
-
 CONSCIOUSNESS_ORDER = ["Unresponsive", "Pain", "Verbal", "Alert"]
 CONS_MAP = {level: i for i, level in enumerate(CONSCIOUSNESS_ORDER)}
-
-# Cache for loaded artifacts
 _cache = {}
 
 
 def _load():
-    """Load all model artifacts (cached after first call)."""
-    if _cache:
-        return _cache
-
-    def load_pkl(name):
-        with open(os.path.join(OUTPUT_DIR, name), "rb") as f:
-            return pickle.load(f)
-
-    _cache["model"] = load_pkl("best_triage_model.pkl")
-    _cache["xgb_model"] = load_pkl("xgb_model.pkl")
-    _cache["scaler"] = load_pkl("scaler.pkl")
-    _cache["label_encoders"] = load_pkl("label_encoders.pkl")
-    _cache["target_le"] = load_pkl("target_label_encoder.pkl")
-    _cache["mlbs"] = load_pkl("multi_label_binarizers.pkl")
-    _cache["knn"] = load_pkl("knn_similarity.pkl")
-    _cache["X_train"] = load_pkl("training_data_scaled.pkl")
-    _cache["y_train"] = load_pkl("training_labels.pkl")
-    _cache["raw_data"] = load_pkl("raw_data.pkl")
-
-    with open(os.path.join(OUTPUT_DIR, "model_metadata.json"), "r") as f:
+    if _cache: return _cache
+    def lp(n):
+        with open(os.path.join(OUTPUT_DIR, n), "rb") as f: return pickle.load(f)
+    _cache["risk_model"] = lp("best_risk_model.pkl")
+    _cache["dept_model"] = lp("dept_model.pkl")
+    _cache["xgb_risk"] = lp("xgb_risk_model.pkl")
+    _cache["scaler"] = lp("scaler.pkl")
+    _cache["label_encoders"] = lp("label_encoders.pkl")
+    _cache["risk_le"] = lp("risk_label_encoder.pkl")
+    _cache["dept_le"] = lp("dept_label_encoder.pkl")
+    _cache["mlbs"] = lp("multi_label_binarizers.pkl")
+    _cache["knn"] = lp("knn_similarity.pkl")
+    _cache["X_train"] = lp("training_data_scaled.pkl")
+    _cache["y_risk"] = lp("training_risk_labels.pkl")
+    _cache["y_dept"] = lp("training_dept_labels.pkl")
+    _cache["raw_data"] = lp("raw_data.pkl")
+    with open(os.path.join(OUTPUT_DIR, "model_metadata.json")) as f:
         _cache["meta"] = json.load(f)
-
     return _cache
 
 
-def _build_features(patient_data: dict) -> pd.DataFrame:
+def _build_features(data):
+    c = _load(); meta = c["meta"]; fn = meta["feature_names"]
+    age = data.get("Age", 30)
+    le_g = c["label_encoders"]["Gender"]
+    g_raw = data.get("Gender", "Male")
+    gender = le_g.transform([g_raw])[0] if g_raw in le_g.classes_ else 0
+    bp_raw = str(data.get("Blood_Pressure", "120/80")).split("/")
+    bp_s = float(bp_raw[0]) if len(bp_raw) >= 1 else 120
+    bp_d = float(bp_raw[1]) if len(bp_raw) >= 2 else 80
+    hr = data.get("Heart_Rate", 80); temp = data.get("Temperature", 98.6)
+    spo2 = data.get("SpO2", 96); rr = data.get("Respiratory_Rate", 18)
+    cons = CONS_MAP.get(data.get("Consciousness_Level", "Alert"), 3)
+    pain = data.get("Pain_Level", 0)
+
+    sym_raw = data.get("Symptoms", "None")
+    sym_list = [s.strip() for s in sym_raw.split(",")] if isinstance(sym_raw, str) and sym_raw.strip().lower() != "none" else []
+    sym_bin = {f"Sym_{s.replace(' ','_')}": (1 if s in sym_list else 0) for s in meta["all_symptoms"]}
+    sym_count = sum(sym_bin.values())
+
+    cond_raw = data.get("Pre_Existing_Conditions", "None")
+    cond_list = [c.strip() for c in cond_raw.split(",")] if isinstance(cond_raw, str) and cond_raw.strip().lower() != "none" else []
+    cond_bin = {f"Cond_{c.replace(' ','_')}": (1 if c in cond_list else 0) for c in meta["all_conditions"]}
+    cond_count = sum(cond_bin.values())
+
+    # NEWS2
+    n2 = 0
+    n2 += (3 if rr<=8 else 1 if rr<=11 else 0 if rr<=20 else 2 if rr<=24 else 3)
+    n2 += (3 if spo2<=91 else 2 if spo2<=93 else 1 if spo2<=95 else 0)
+    n2 += (3 if hr<=40 else 1 if hr<=50 else 0 if hr<=90 else 1 if hr<=110 else 2 if hr<=130 else 3)
+    tc = (temp-32)*5/9
+    n2 += (3 if tc<=35 else 1 if tc<=36 else 0 if tc<=38 else 1 if tc<=39 else 2)
+    n2 += (3 if bp_s<=90 else 2 if bp_s<=100 else 1 if bp_s<=110 else 0 if bp_s<=219 else 3)
+    n2 += (3 if cons<3 else 0)
+
+    # Interactions
+    map_v = bp_d+(bp_s-bp_d)/3
+    row = {"Age":age,"Gender":gender,"Heart_Rate":hr,"Temperature":temp,"SpO2":spo2,
+           "Respiratory_Rate":rr,"Consciousness_Level":cons,"Pain_Level":pain,
+           "BP_Systolic":bp_s,"BP_Diastolic":bp_d,"Symptom_Count":sym_count,
+           "Condition_Count":cond_count,"NEWS2_Score":n2,
+           "Shock_Index":hr/max(bp_s,1),"Modified_Shock_Index":hr/max(map_v,1),
+           "Oxy_Stress":rr/max(spo2,1),
+           "Fever_Hypoxia":(1 if temp>100.4 else 0)*(100-spo2),
+           "Age_Vulnerability":(2 if age>65 else 2 if age<5 else 1 if age>50 else 0)*(pain/10+0.5),
+           "Symptom_Severity":sym_count*(4-cons)/4,
+           "Comorbidity_Burden":cond_count*(1.5 if age>60 else 1.0),
+           "Hemodynamic_Instability":abs(hr-75)/75+abs(bp_s-120)/120}
+    row.update(sym_bin); row.update(cond_bin)
+    df = pd.DataFrame([{f: row.get(f,0) for f in fn}], columns=fn)
+    return pd.DataFrame(c["scaler"].transform(df), columns=fn)
+
+
+def compute_priority_score(data, risk_level, news2_raw):
+    """Compute priority score (0-100). Higher = more urgent = treated first."""
+    w = {"risk": 0.40, "news2": 0.25, "vitals": 0.20, "age": 0.15}
+    risk_score = {"High": 100, "Medium": 50, "Low": 10}.get(risk_level, 10)
+    news2_norm = min(news2_raw / 18 * 100, 100)
+
+    # Vitals sub-score
+    vs = 0
+    spo2 = data.get("SpO2", 96)
+    hr = data.get("Heart_Rate", 80)
+    if spo2 < 90: vs += 40
+    elif spo2 < 94: vs += 20
+    if hr > 120 or hr < 50: vs += 30
+    elif hr > 100: vs += 15
+    cons = data.get("Consciousness_Level", "Alert")
+    if cons in ("Unresponsive", "Pain"): vs += 30
+    elif cons == "Verbal": vs += 15
+    vs = min(vs, 100)
+
+    # Age sub-score
+    age = data.get("Age", 30)
+    age_s = 80 if age > 70 else (60 if age > 60 else (70 if age < 5 else (30 if age < 12 else 20)))
+
+    priority = (w["risk"]*risk_score + w["news2"]*news2_norm +
+                w["vitals"]*vs + w["age"]*age_s)
+    return round(min(priority, 100), 1)
+
+
+def triage_patient(data):
     """
-    Convert raw patient input into the 47-feature engineered vector.
-    Applies the same preprocessing as training.
+    Full triage: predict risk level, assign department, compute priority.
+
+    Returns dict with: patient_id, risk_level, department, priority_score,
+    confidence, needs_escalation, news2_score, probabilities
     """
-    c = _load()
-    meta = c["meta"]
-    feature_names = meta["feature_names"]
-    all_symptoms = meta["all_symptoms"]
-    all_conditions = meta["all_conditions"]
-
-    # ── Parse raw inputs ──
-    age = patient_data.get("Age", 30)
-
-    gender_raw = patient_data.get("Gender", "Male")
-    le_gender = c["label_encoders"]["Gender"]
-    gender = le_gender.transform([gender_raw])[0] if gender_raw in le_gender.classes_ else 0
-
-    bp_raw = str(patient_data.get("Blood_Pressure", "120/80"))
-    bp_parts = bp_raw.split("/")
-    bp_sys = float(bp_parts[0]) if len(bp_parts) >= 1 else 120
-    bp_dia = float(bp_parts[1]) if len(bp_parts) >= 2 else 80
-
-    hr = patient_data.get("Heart_Rate", 80)
-    temp = patient_data.get("Temperature", 98.6)
-    spo2 = patient_data.get("SpO2", 96)
-    rr = patient_data.get("Respiratory_Rate", 18)
-    cons_raw = patient_data.get("Consciousness_Level", "Alert")
-    cons = CONS_MAP.get(cons_raw, 3)
-    pain = patient_data.get("Pain_Level", 0)
-
-    # Symptoms → binary
-    sym_raw = patient_data.get("Symptoms", "None")
-    sym_list = ([s.strip() for s in sym_raw.split(",")]
-                if isinstance(sym_raw, str) and sym_raw.strip().lower() != "none" else [])
-    sym_binary = {f"Sym_{s.replace(' ', '_')}": (1 if s in sym_list else 0) for s in all_symptoms}
-    symptom_count = sum(sym_binary.values())
-
-    # Conditions → binary
-    cond_raw = patient_data.get("Pre_Existing_Conditions", "None")
-    cond_list = ([c.strip() for c in cond_raw.split(",")]
-                 if isinstance(cond_raw, str) and cond_raw.strip().lower() != "none" else [])
-    cond_binary = {f"Cond_{c.replace(' ', '_')}": (1 if c in cond_list else 0) for c in all_conditions}
-    condition_count = sum(cond_binary.values())
-
-    # ── NEWS2 Score ──
-    news2 = 0
-    news2 += (3 if rr <= 8 else 1 if rr <= 11 else 0 if rr <= 20 else 2 if rr <= 24 else 3)
-    news2 += (3 if spo2 <= 91 else 2 if spo2 <= 93 else 1 if spo2 <= 95 else 0)
-    news2 += (3 if hr <= 40 else 1 if hr <= 50 else 0 if hr <= 90 else 1 if hr <= 110 else 2 if hr <= 130 else 3)
-    temp_c = (temp - 32) * 5 / 9
-    news2 += (3 if temp_c <= 35.0 else 1 if temp_c <= 36.0 else 0 if temp_c <= 38.0 else 1 if temp_c <= 39.0 else 2)
-    news2 += (3 if bp_sys <= 90 else 2 if bp_sys <= 100 else 1 if bp_sys <= 110 else 0 if bp_sys <= 219 else 3)
-    news2 += (3 if cons < 3 else 0)
-
-    # ── Feature Interactions ──
-    map_val = bp_dia + (bp_sys - bp_dia) / 3
-    shock_idx = hr / max(bp_sys, 1)
-    mod_shock = hr / max(map_val, 1)
-    oxy_stress = rr / max(spo2, 1)
-    fever_hypoxia = (1 if temp > 100.4 else 0) * (100 - spo2)
-    age_risk = 2 if age > 65 else (2 if age < 5 else (1 if age > 50 else 0))
-    age_vuln = age_risk * (pain / 10 + 0.5)
-    sym_severity = symptom_count * (4 - cons) / 4
-    comorbidity_burden = condition_count * (1.5 if age > 60 else 1.0)
-    hemo_instab = abs(hr - 75) / 75 + abs(bp_sys - 120) / 120
-
-    # ── Assemble feature dict ──
-    row = {
-        "Age": age, "Gender": gender,
-        "Heart_Rate": hr, "Temperature": temp, "SpO2": spo2,
-        "Respiratory_Rate": rr, "Consciousness_Level": cons, "Pain_Level": pain,
-        "BP_Systolic": bp_sys, "BP_Diastolic": bp_dia,
-        "Symptom_Count": symptom_count, "Condition_Count": condition_count,
-        "NEWS2_Score": news2,
-        "Shock_Index": shock_idx, "Modified_Shock_Index": mod_shock,
-        "Oxy_Stress": oxy_stress, "Fever_Hypoxia": fever_hypoxia,
-        "Age_Vulnerability": age_vuln, "Symptom_Severity": sym_severity,
-        "Comorbidity_Burden": comorbidity_burden,
-        "Hemodynamic_Instability": hemo_instab,
-    }
-    row.update(sym_binary)
-    row.update(cond_binary)
-
-    df = pd.DataFrame([{f: row.get(f, 0) for f in feature_names}], columns=feature_names)
-    df_scaled = pd.DataFrame(c["scaler"].transform(df), columns=feature_names)
-
-    return df_scaled
-
-
-def predict_risk(patient_data: dict) -> dict:
-    """
-    Predict risk level with confidence-based triage escalation.
-
-    If confidence < 60%, the result is flagged as "UNCERTAIN — ESCALATE TO DOCTOR".
-
-    Returns
-    -------
-    dict with keys: patient_id, risk_level, confidence, probabilities,
-                    needs_escalation, escalation_reason, news2_score
-    """
-    c = _load()
-    meta = c["meta"]
+    c = _load(); meta = c["meta"]
     threshold = meta.get("escalation_threshold", 0.60)
+    df_scaled = _build_features(data)
 
-    df_scaled = _build_features(patient_data)
+    # Risk prediction
+    risk_pred = c["risk_model"].predict(df_scaled)[0]
+    risk_proba = c["risk_model"].predict_proba(df_scaled)[0]
+    risk_label = c["risk_le"].inverse_transform([risk_pred])[0]
+    confidence = float(np.max(risk_proba))
 
-    # Predict
-    pred = c["model"].predict(df_scaled)[0]
-    proba = c["model"].predict_proba(df_scaled)[0]
+    # Department prediction
+    dept_pred = c["dept_model"].predict(df_scaled)[0]
+    dept_proba = c["dept_model"].predict_proba(df_scaled)[0]
+    dept_label = c["dept_le"].inverse_transform([dept_pred])[0]
+    dept_confidence = float(np.max(dept_proba))
 
-    risk_label = c["target_le"].inverse_transform([pred])[0]
-    confidence = float(np.max(proba))
+    # NEWS2 (unscaled)
+    n2_idx = meta["feature_names"].index("NEWS2_Score") if "NEWS2_Score" in meta["feature_names"] else None
+    news2_raw = 0
+    if n2_idx is not None:
+        news2_raw = float(df_scaled.iloc[0, n2_idx] * c["scaler"].scale_[n2_idx] + c["scaler"].mean_[n2_idx])
 
-    prob_dict = {
-        cls: round(float(p), 4)
-        for cls, p in zip(c["target_le"].classes_, proba)
-    }
+    # Priority score
+    priority = compute_priority_score(data, risk_label, max(news2_raw, 0))
 
-    # NEWS2 score for context
-    news2 = 0.0
-    if "NEWS2_Score" in meta["feature_names"]:
-        news2 = float(df_scaled["NEWS2_Score"].iloc[0])
-
-    # Escalation logic
-    needs_escalation = False
-    escalation_reason = None
-
+    # Escalation
+    needs_esc = False; esc_reason = None
     if confidence < threshold:
-        needs_escalation = True
-        escalation_reason = f"Low model confidence ({confidence*100:.1f}% < {threshold*100:.0f}%)"
-
-    # Also escalate if top 2 predictions are very close (ambiguous case)
-    sorted_proba = sorted(proba, reverse=True)
-    if len(sorted_proba) >= 2 and (sorted_proba[0] - sorted_proba[1]) < 0.15:
-        needs_escalation = True
-        escalation_reason = (f"Ambiguous prediction — top 2 classes are close: "
-                             f"{sorted_proba[0]*100:.1f}% vs {sorted_proba[1]*100:.1f}%")
+        needs_esc = True; esc_reason = f"Low confidence ({confidence*100:.1f}%)"
+    sorted_p = sorted(risk_proba, reverse=True)
+    if len(sorted_p) >= 2 and (sorted_p[0] - sorted_p[1]) < 0.15:
+        needs_esc = True; esc_reason = f"Ambiguous: {sorted_p[0]*100:.1f}% vs {sorted_p[1]*100:.1f}%"
 
     return {
-        "patient_id": patient_data.get("Patient_ID", "Unknown"),
+        "patient_id": data.get("Patient_ID", "Unknown"),
         "risk_level": risk_label,
+        "department": dept_label,
+        "priority_score": priority,
         "confidence": round(confidence, 4),
-        "probabilities": prob_dict,
-        "needs_escalation": needs_escalation,
-        "escalation_reason": escalation_reason,
-        "news2_score": round(news2, 2),
+        "dept_confidence": round(dept_confidence, 4),
+        "needs_escalation": needs_esc,
+        "escalation_reason": esc_reason,
+        "news2_score": round(max(news2_raw, 0), 1),
+        "risk_probabilities": {cl: round(float(p),4) for cl,p in zip(c["risk_le"].classes_, risk_proba)},
+        "dept_probabilities": {cl: round(float(p),4) for cl,p in zip(c["dept_le"].classes_, dept_proba)},
     }
 
 
-def find_similar_patients(patient_data: dict, n_similar: int = 5) -> list:
+# ── Priority Queue ────────────────────────────────────────────────
+class PatientQueue:
     """
-    Find the most similar past patients using K-Nearest Neighbors.
-
-    Returns a list of similar patient records with their risk levels
-    and similarity scores (lower distance = more similar).
+    Priority queue for a hospital department.
+    Patients are ordered by priority_score (highest = first).
     """
-    c = _load()
-    df_scaled = _build_features(patient_data)
+    def __init__(self, department):
+        self.department = department
+        self._heap = []  # min-heap, negate score for max-priority
+        self._counter = 0
 
-    distances, indices = c["knn"].kneighbors(df_scaled, n_neighbors=n_similar)
+    def add_patient(self, triage_result):
+        self._counter += 1
+        entry = (-triage_result["priority_score"], self._counter,
+                 triage_result["patient_id"], triage_result)
+        heapq.heappush(self._heap, entry)
 
-    raw_data = c["raw_data"]
-    target_le = c["target_le"]
-    y = c["y_train"]
+    def next_patient(self):
+        if self._heap:
+            neg_score, _, pid, result = heapq.heappop(self._heap)
+            return result
+        return None
 
-    similar = []
-    for dist, idx in zip(distances[0], indices[0]):
-        record = raw_data.iloc[idx].to_dict()
-        record["similarity_distance"] = round(float(dist), 4)
-        record["risk_level_actual"] = target_le.inverse_transform([y.iloc[idx]])[0]
-        similar.append(record)
+    def peek(self):
+        if self._heap:
+            return self._heap[0][3]
+        return None
 
-    return similar
+    @property
+    def size(self):
+        return len(self._heap)
 
-
-def explain_prediction(patient_data: dict) -> dict:
-    """
-    Generate a per-patient SHAP explanation showing which features
-    are pushing the prediction toward High / Medium / Low risk.
-
-    Returns the top contributing features with their SHAP values.
-    """
-    c = _load()
-    meta = c["meta"]
-    import shap
-
-    df_scaled = _build_features(patient_data)
-    xgb_model = c["xgb_model"]
-
-    explainer = shap.TreeExplainer(xgb_model)
-    shap_values = explainer.shap_values(df_scaled)
-
-    # Get explanation for the predicted class
-    pred = int(xgb_model.predict(df_scaled)[0])
-    risk_label = c["target_le"].inverse_transform([pred])[0]
-
-    # Handle multi-class SHAP: can be list of arrays or 3D array
-    if isinstance(shap_values, list):
-        sv = np.array(shap_values[pred]).flatten()
-    elif shap_values.ndim == 3:
-        sv = shap_values[0, :, pred] if shap_values.shape[0] == 1 else shap_values[pred][0]
-    else:
-        sv = np.array(shap_values).flatten()
-
-    feature_names = meta["feature_names"]
-    contributions = sorted(
-        [(f, float(v)) for f, v in zip(feature_names, sv)],
-        key=lambda x: abs(x[1]), reverse=True
-    )
-
-    top_positive = [(f, round(float(v), 4)) for f, v in contributions if v > 0][:8]
-    top_negative = [(f, round(float(v), 4)) for f, v in contributions if v < 0][:5]
-
-    return {
-        "predicted_class": risk_label,
-        "top_risk_factors": top_positive,
-        "top_protective_factors": top_negative,
-        "interpretation": (
-            f"The model predicted '{risk_label}' risk. "
-            f"Key risk factors: {', '.join(f[0] for f in top_positive[:3])}. "
-            f"Protective factors: {', '.join(f[0] for f in top_negative[:3]) or 'None significant'}."
-        ),
-    }
+    def get_queue(self):
+        sorted_q = sorted(self._heap)
+        return [{"position": i+1, "patient_id": e[2],
+                 "priority_score": -e[0], "risk_level": e[3]["risk_level"]}
+                for i, e in enumerate(sorted_q)]
 
 
-# ───────────────────────────────────────────────────────────────────
-# CLI Demo
-# ───────────────────────────────────────────────────────────────────
+class HospitalQueueManager:
+    """Manages queues for all departments."""
+    def __init__(self):
+        self.queues = {}
+
+    def admit_patient(self, patient_data):
+        result = triage_patient(patient_data)
+        dept = result["department"]
+        if dept not in self.queues:
+            self.queues[dept] = PatientQueue(dept)
+        self.queues[dept].add_patient(result)
+        result["queue_position"] = self.queues[dept].size
+        return result
+
+    def get_next(self, department):
+        if department in self.queues:
+            return self.queues[department].next_patient()
+        return None
+
+    def view_all_queues(self):
+        return {dept: q.get_queue() for dept, q in self.queues.items()}
+
+    def summary(self):
+        return {dept: q.size for dept, q in self.queues.items()}
+
+
+def find_similar_patients(data, n=5):
+    c = _load(); df_s = _build_features(data)
+    dists, idxs = c["knn"].kneighbors(df_s, n_neighbors=n)
+    raw = c["raw_data"]; rl = c["risk_le"]; yr = c["y_risk"]
+    return [{"Patient_ID": raw.iloc[i]["Patient_ID"], "Age": raw.iloc[i]["Age"],
+             "risk_level": rl.inverse_transform([yr.iloc[i]])[0],
+             "distance": round(float(d), 4)}
+            for d, i in zip(dists[0], idxs[0])]
+
+
+def explain_prediction(data):
+    c = _load(); meta = c["meta"]; import shap
+    df_s = _build_features(data); xm = c["xgb_risk"]
+    exp = shap.TreeExplainer(xm); sv = exp.shap_values(df_s)
+    pred = int(xm.predict(df_s)[0])
+    rl = c["risk_le"].inverse_transform([pred])[0]
+    if isinstance(sv, list): vals = np.array(sv[pred]).flatten()
+    elif sv.ndim == 3: vals = sv[0,:,pred] if sv.shape[0]==1 else sv[pred][0]
+    else: vals = np.array(sv).flatten()
+    contribs = sorted([(f,float(v)) for f,v in zip(meta["feature_names"],vals)], key=lambda x:abs(x[1]), reverse=True)
+    pos = [(f,round(v,4)) for f,v in contribs if v>0][:8]
+    neg = [(f,round(v,4)) for f,v in contribs if v<0][:5]
+    return {"predicted_class": rl, "top_risk_factors": pos, "top_protective_factors": neg,
+            "interpretation": f"Predicted '{rl}'. Key factors: {', '.join(f[0] for f in pos[:3])}."}
+
+
+# ── CLI DEMO ──────────────────────────────────────────────────────
 if __name__ == "__main__":
-    print("=" * 65)
-    print("  🏥 Smart Patient Triage — Advanced Prediction Demo")
-    print("=" * 65)
+    print("="*65)
+    print("  🏥 Smart Patient Triage — Department Routing + Priority Queue")
+    print("="*65)
 
-    patients = {
-        "HIGH-RISK": {
-            "Patient_ID": "PT-10001", "Age": 72, "Gender": "Male",
-            "Symptoms": "Fever, Cough, Chest Pain, Shortness of Breath, Fatigue, Nausea",
-            "Blood_Pressure": "185/110", "Heart_Rate": 130, "Temperature": 103.8,
-            "SpO2": 88, "Respiratory_Rate": 32, "Consciousness_Level": "Verbal",
-            "Pain_Level": 9,
-            "Pre_Existing_Conditions": "Diabetes, Hypertension, Heart Disease, Kidney Disease",
-        },
-        "LOW-RISK": {
-            "Patient_ID": "PT-10002", "Age": 25, "Gender": "Female",
-            "Symptoms": "Cough, Headache, Sore Throat",
-            "Blood_Pressure": "118/76", "Heart_Rate": 75, "Temperature": 98.6,
-            "SpO2": 98, "Respiratory_Rate": 16, "Consciousness_Level": "Alert",
-            "Pain_Level": 2, "Pre_Existing_Conditions": "None",
-        },
-        "MEDIUM-RISK": {
-            "Patient_ID": "PT-10003", "Age": 55, "Gender": "Male",
-            "Symptoms": "Fever, Cough, Fatigue, Headache, Dizziness, Body Ache",
-            "Blood_Pressure": "142/88", "Heart_Rate": 95, "Temperature": 101.2,
-            "SpO2": 94, "Respiratory_Rate": 22, "Consciousness_Level": "Alert",
-            "Pain_Level": 5, "Pre_Existing_Conditions": "Diabetes, Asthma",
-        },
-    }
+    patients = [
+        {"Patient_ID":"PT-10001","Age":72,"Gender":"Male","Symptoms":"Fever, Cough, Chest Pain, Shortness of Breath",
+         "Blood_Pressure":"185/110","Heart_Rate":130,"Temperature":103.8,"SpO2":88,
+         "Respiratory_Rate":32,"Consciousness_Level":"Verbal","Pain_Level":9,
+         "Pre_Existing_Conditions":"Diabetes, Hypertension, Heart Disease"},
+        {"Patient_ID":"PT-10002","Age":25,"Gender":"Female","Symptoms":"Cough, Headache, Sore Throat",
+         "Blood_Pressure":"118/76","Heart_Rate":75,"Temperature":98.6,"SpO2":98,
+         "Respiratory_Rate":16,"Consciousness_Level":"Alert","Pain_Level":2,
+         "Pre_Existing_Conditions":"None"},
+        {"Patient_ID":"PT-10003","Age":55,"Gender":"Male","Symptoms":"Fever, Cough, Fatigue, Dizziness",
+         "Blood_Pressure":"142/88","Heart_Rate":95,"Temperature":101.2,"SpO2":94,
+         "Respiratory_Rate":22,"Consciousness_Level":"Alert","Pain_Level":5,
+         "Pre_Existing_Conditions":"Diabetes, Asthma"},
+        {"Patient_ID":"PT-10004","Age":8,"Gender":"Female","Symptoms":"Fever, Nausea, Vomiting, Abdominal Pain",
+         "Blood_Pressure":"100/65","Heart_Rate":110,"Temperature":102.5,"SpO2":97,
+         "Respiratory_Rate":24,"Consciousness_Level":"Alert","Pain_Level":6,
+         "Pre_Existing_Conditions":"None"},
+        {"Patient_ID":"PT-10005","Age":65,"Gender":"Male","Symptoms":"Confusion, Headache, Dizziness",
+         "Blood_Pressure":"160/95","Heart_Rate":88,"Temperature":98.8,"SpO2":95,
+         "Respiratory_Rate":18,"Consciousness_Level":"Verbal","Pain_Level":7,
+         "Pre_Existing_Conditions":"Hypertension, Stroke History"},
+    ]
 
-    for label, patient in patients.items():
-        result = predict_risk(patient)
-        print(f"\n{'─' * 65}")
-        print(f"  📋 {label} Patient  (ID: {result['patient_id']})")
-        print(f"{'─' * 65}")
-        print(f"  🩺 Predicted Risk Level : {result['risk_level']}")
-        print(f"  📊 Confidence           : {result['confidence'] * 100:.1f}%")
-        print(f"  📈 Probabilities        : {result['probabilities']}")
+    # Create hospital queue manager
+    hospital = HospitalQueueManager()
 
-        if result["needs_escalation"]:
-            print(f"  🚨 ESCALATION           : {result['escalation_reason']}")
-        else:
-            print(f"  ✅ Escalation           : Not needed")
+    print("\n📥 Admitting patients...\n")
+    for p in patients:
+        result = hospital.admit_patient(p)
+        print(f"  📋 {result['patient_id']}")
+        print(f"     Risk: {result['risk_level']} ({result['confidence']*100:.1f}%) | "
+              f"Dept: {result['department']} ({result['dept_confidence']*100:.1f}%)")
+        print(f"     Priority: {result['priority_score']}/100 | "
+              f"NEWS2: {result['news2_score']} | "
+              f"{'🚨 ESCALATE: '+result['escalation_reason'] if result['needs_escalation'] else '✅ OK'}")
 
-        # SHAP explanation
-        explanation = explain_prediction(patient)
-        print(f"  🔍 Top risk factors     : {', '.join(f'{f}({v:+.3f})' for f, v in explanation['top_risk_factors'][:4])}")
-        print(f"  🛡️  Protective factors   : {', '.join(f'{f}({v:+.3f})' for f, v in explanation['top_protective_factors'][:3]) or 'None'}")
+    print(f"\n{'─'*65}")
+    print("  🏥 Department Queues (ordered by priority)")
+    print(f"{'─'*65}")
 
-        # Similar patients
-        similar = find_similar_patients(patient, n_similar=3)
-        print(f"  👥 Similar past patients:")
-        for sp in similar:
-            print(f"     → {sp['Patient_ID']} | Age {sp['Age']} | Risk: {sp['risk_level_actual']} | "
-                  f"Distance: {sp['similarity_distance']}")
+    all_queues = hospital.view_all_queues()
+    for dept, queue in sorted(all_queues.items()):
+        print(f"\n  🏷️  {dept} ({len(queue)} patients)")
+        for entry in queue:
+            print(f"     #{entry['position']}  {entry['patient_id']}  "
+                  f"Priority: {entry['priority_score']}  Risk: {entry['risk_level']}")
 
-    print(f"\n{'=' * 65}")
-    print("  ✅ Advanced demo complete!")
-    print("=" * 65)
+    print(f"\n{'─'*65}")
+    print("  👨‍⚕️ Doctor calls next patient from each department")
+    print(f"{'─'*65}")
+    for dept in sorted(all_queues.keys()):
+        nxt = hospital.get_next(dept)
+        if nxt:
+            print(f"  {dept} → {nxt['patient_id']} (Priority: {nxt['priority_score']}, Risk: {nxt['risk_level']})")
+
+    # SHAP explanation for first patient
+    print(f"\n{'─'*65}")
+    print("  🔍 SHAP Explanation for PT-10001")
+    print(f"{'─'*65}")
+    exp = explain_prediction(patients[0])
+    print(f"  Prediction: {exp['predicted_class']}")
+    print(f"  Risk factors: {', '.join(f'{f}({v:+.3f})' for f,v in exp['top_risk_factors'][:4])}")
+    print(f"  Protective:   {', '.join(f'{f}({v:+.3f})' for f,v in exp['top_protective_factors'][:3]) or 'None'}")
+
+    print(f"\n{'='*65}")
+    print("  ✅ Demo complete!")
+    print("="*65)

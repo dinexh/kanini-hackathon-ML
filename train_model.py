@@ -1,558 +1,205 @@
 """
-AI-Powered Smart Patient Triage System — Advanced Training Pipeline (v3)
+AI-Powered Smart Patient Triage System — Training Pipeline (v4)
 
-WHAT MAKES THIS UNIQUE (vs. basic classifiers):
-  ┌─────────────────────────────────────────────────────────────────────┐
-  │ 1. NEWS2-inspired Clinical Severity Score (domain-knowledge feat.) │
-  │ 2. Medically meaningful feature interactions (Shock Index, etc.)   │
-  │ 3. Stacking Ensemble (LR + RF + XGBoost → Meta-Learner)           │
-  │ 4. Confidence-based triage escalation (uncertain → doctor review)  │
-  │ 5. Patient similarity scoring (find similar past cases)            │
-  │ 6. SHAP explainability per-patient                                 │
-  └─────────────────────────────────────────────────────────────────────┘
+Dual-model: Risk Classifier + Department Classifier + Priority Queue
 """
 
-import os
-import json
-import warnings
-import numpy as np
-import pandas as pd
-import pickle
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import seaborn as sns
-
+import os, json, warnings, numpy as np, pandas as pd, pickle
+import matplotlib; matplotlib.use("Agg")
+import matplotlib.pyplot as plt, seaborn as sns
 from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.preprocessing import LabelEncoder, StandardScaler, MultiLabelBinarizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.tree import DecisionTreeClassifier
-from sklearn.ensemble import (
-    RandomForestClassifier, StackingClassifier, GradientBoostingClassifier
-)
+from sklearn.ensemble import RandomForestClassifier, StackingClassifier, GradientBoostingClassifier
 from sklearn.neighbors import NearestNeighbors
-from sklearn.metrics import (
-    accuracy_score, precision_score, recall_score,
-    f1_score, confusion_matrix, classification_report
-)
-
-import xgboost as xgb
-import shap
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, classification_report
+import xgboost as xgb, shap
 
 warnings.filterwarnings("ignore")
-
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_PATH = os.path.join(BASE_DIR, "data", "patient_triage_dataset.csv")
 OUTPUT_DIR = os.path.join(BASE_DIR, "output")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# Canonical value lists
-ALL_SYMPTOMS = sorted([
-    "Abdominal Pain", "Body Ache", "Chest Pain", "Confusion", "Cough",
-    "Diarrhea", "Dizziness", "Fatigue", "Fever", "Headache",
-    "Loss of Appetite", "Nausea", "Seizures", "Shortness of Breath",
-    "Sore Throat", "Vomiting",
-])
-ALL_CONDITIONS = sorted([
-    "Asthma", "COPD", "Cancer", "Diabetes", "Heart Disease",
-    "Hypertension", "Kidney Disease", "Liver Disease", "Obesity",
-    "Stroke History",
-])
+ALL_SYMPTOMS = sorted(["Abdominal Pain","Body Ache","Chest Pain","Confusion","Cough","Diarrhea","Dizziness","Fatigue","Fever","Headache","Loss of Appetite","Nausea","Seizures","Shortness of Breath","Sore Throat","Vomiting"])
+ALL_CONDITIONS = sorted(["Asthma","COPD","Cancer","Diabetes","Heart Disease","Hypertension","Kidney Disease","Liver Disease","Obesity","Stroke History"])
 CONSCIOUSNESS_ORDER = ["Unresponsive", "Pain", "Verbal", "Alert"]
 CONS_MAP = {level: i for i, level in enumerate(CONSCIOUSNESS_ORDER)}
-
-# Confidence threshold — below this, flag for doctor review
 ESCALATION_THRESHOLD = 0.60
 
-
-# ═══════════════════════════════════════════════════════════════════
-# FEATURE ENGINEERING FUNCTIONS (what makes this model unique!)
-# ═══════════════════════════════════════════════════════════════════
-
 def compute_news2_score(df):
-    """
-    NEWS2 (National Early Warning Score 2) — inspired clinical severity index.
-
-    This is a well-established triage scoring system used in UK hospitals.
-    We compute a simplified version as a composite feature.
-    Each vital sign gets a sub-score (0-3) based on clinical thresholds,
-    and they are summed into a single severity index.
-
-    This gives the model DOMAIN KNOWLEDGE that raw features alone can't capture.
-    """
     score = pd.Series(0, index=df.index, dtype=float)
-
-    # Respiratory Rate scoring
     rr = df["Respiratory_Rate"]
-    score += np.where(rr <= 8, 3, np.where(rr <= 11, 1, np.where(rr <= 20, 0,
-             np.where(rr <= 24, 2, 3))))
-
-    # SpO2 scoring (Scale 1)
+    score += np.where(rr<=8,3,np.where(rr<=11,1,np.where(rr<=20,0,np.where(rr<=24,2,3))))
     spo2 = df["SpO2"]
-    score += np.where(spo2 <= 91, 3, np.where(spo2 <= 93, 2,
-             np.where(spo2 <= 95, 1, 0)))
-
-    # Heart Rate scoring
+    score += np.where(spo2<=91,3,np.where(spo2<=93,2,np.where(spo2<=95,1,0)))
     hr = df["Heart_Rate"]
-    score += np.where(hr <= 40, 3, np.where(hr <= 50, 1, np.where(hr <= 90, 0,
-             np.where(hr <= 110, 1, np.where(hr <= 130, 2, 3)))))
-
-    # Temperature scoring (convert °F to °C for NEWS2 thresholds)
-    temp_c = (df["Temperature"] - 32) * 5 / 9
-    score += np.where(temp_c <= 35.0, 3, np.where(temp_c <= 36.0, 1,
-             np.where(temp_c <= 38.0, 0, np.where(temp_c <= 39.0, 1, 2))))
-
-    # Systolic BP scoring
+    score += np.where(hr<=40,3,np.where(hr<=50,1,np.where(hr<=90,0,np.where(hr<=110,1,np.where(hr<=130,2,3)))))
+    temp_c = (df["Temperature"]-32)*5/9
+    score += np.where(temp_c<=35,3,np.where(temp_c<=36,1,np.where(temp_c<=38,0,np.where(temp_c<=39,1,2))))
     sbp = df["BP_Systolic"]
-    score += np.where(sbp <= 90, 3, np.where(sbp <= 100, 2, np.where(sbp <= 110, 1,
-             np.where(sbp <= 219, 0, 3))))
-
-    # Consciousness scoring (AVPU)
-    score += np.where(df["Consciousness_Level"] < 3, 3, 0)  # anything below Alert
-
+    score += np.where(sbp<=90,3,np.where(sbp<=100,2,np.where(sbp<=110,1,np.where(sbp<=219,0,3))))
+    score += np.where(df["Consciousness_Level"]<3,3,0)
     return score
 
-
 def compute_feature_interactions(df):
-    """
-    Create medically meaningful compound features that capture
-    relationships between vitals that a linear model would miss.
-    """
-    features = pd.DataFrame(index=df.index)
-
-    # Shock Index = HR / Systolic BP  (>1.0 = shock, critical triage indicator)
-    features["Shock_Index"] = df["Heart_Rate"] / df["BP_Systolic"].clip(lower=1)
-
-    # Modified Shock Index = HR / Mean Arterial Pressure
-    map_val = df["BP_Diastolic"] + (df["BP_Systolic"] - df["BP_Diastolic"]) / 3
-    features["Modified_Shock_Index"] = df["Heart_Rate"] / map_val.clip(lower=1)
-
-    # Oxygenation stress = Respiratory Rate / SpO2 (higher = worse)
-    features["Oxy_Stress"] = df["Respiratory_Rate"] / df["SpO2"].clip(lower=1)
-
-    # Fever-Hypoxia interaction (fever + low SpO2 = pneumonia/sepsis signal)
-    features["Fever_Hypoxia"] = ((df["Temperature"] > 100.4).astype(int) *
-                                  (100 - df["SpO2"]))
-
-    # Age-vulnerability index (very young or very old with abnormal vitals)
-    age_risk = np.where(df["Age"] > 65, 2, np.where(df["Age"] < 5, 2,
-               np.where(df["Age"] > 50, 1, 0)))
-    features["Age_Vulnerability"] = age_risk * (df["Pain_Level"] / 10 + 0.5)
-
-    # Symptom severity score (count of symptoms × consciousness penalty)
-    features["Symptom_Severity"] = (df["Symptom_Count"] *
-                                     (4 - df["Consciousness_Level"]) / 4)
-
-    # Comorbidity burden (conditions count × age factor)
-    features["Comorbidity_Burden"] = (df["Condition_Count"] *
-                                       np.where(df["Age"] > 60, 1.5, 1.0))
-
-    # Hemodynamic instability = abs(HR - 75) + abs(SBP - 120) normalized
-    features["Hemodynamic_Instability"] = (
-        np.abs(df["Heart_Rate"] - 75) / 75 +
-        np.abs(df["BP_Systolic"] - 120) / 120
-    )
-
-    return features
-
+    f = pd.DataFrame(index=df.index)
+    f["Shock_Index"] = df["Heart_Rate"]/df["BP_Systolic"].clip(lower=1)
+    map_v = df["BP_Diastolic"]+(df["BP_Systolic"]-df["BP_Diastolic"])/3
+    f["Modified_Shock_Index"] = df["Heart_Rate"]/map_v.clip(lower=1)
+    f["Oxy_Stress"] = df["Respiratory_Rate"]/df["SpO2"].clip(lower=1)
+    f["Fever_Hypoxia"] = (df["Temperature"]>100.4).astype(int)*(100-df["SpO2"])
+    age_r = np.where(df["Age"]>65,2,np.where(df["Age"]<5,2,np.where(df["Age"]>50,1,0)))
+    f["Age_Vulnerability"] = age_r*(df["Pain_Level"]/10+0.5)
+    f["Symptom_Severity"] = df["Symptom_Count"]*(4-df["Consciousness_Level"])/4
+    f["Comorbidity_Burden"] = df["Condition_Count"]*np.where(df["Age"]>60,1.5,1.0)
+    f["Hemodynamic_Instability"] = np.abs(df["Heart_Rate"]-75)/75+np.abs(df["BP_Systolic"]-120)/120
+    return f
 
 def parse_multi_value(series, all_values, prefix):
-    """Convert comma-separated string column into binary columns."""
     def split_fn(val):
-        if pd.isna(val) or val.strip().lower() == "none":
-            return []
+        if pd.isna(val) or val.strip().lower()=="none": return []
         return [v.strip() for v in val.split(",")]
     mlb = MultiLabelBinarizer(classes=all_values)
-    encoded = mlb.fit_transform(series.apply(split_fn))
-    cols = [f"{prefix}_{v.replace(' ', '_')}" for v in all_values]
-    return pd.DataFrame(encoded, columns=cols, index=series.index), mlb
+    enc = mlb.fit_transform(series.apply(split_fn))
+    cols = [f"{prefix}_{v.replace(' ','_')}" for v in all_values]
+    return pd.DataFrame(enc, columns=cols, index=series.index), mlb
 
-
-# ═══════════════════════════════════════════════════════════════════
-# 1. LOAD & PREPROCESS
-# ═══════════════════════════════════════════════════════════════════
-print("=" * 65)
-print("  STEP 1: Loading & Advanced Preprocessing")
-print("=" * 65)
-
+# ── LOAD & PREPROCESS ─────────────────────────────────────────────
+print("="*65+"\n  STEP 1: Loading & Preprocessing\n"+"="*65)
 df = pd.read_csv(DATA_PATH)
-print(f"\n📂 Dataset loaded: {df.shape[0]} rows × {df.shape[1]} columns")
-print(f"\n📊 Risk Level distribution:\n{df['Risk_Level'].value_counts().to_string()}")
+print(f"\n📂 {df.shape[0]} rows × {df.shape[1]} cols")
+print(f"\n📊 Risk:\n{df['Risk_Level'].value_counts().to_string()}")
+print(f"\n🏥 Depts:\n{df['Department'].value_counts().to_string()}")
 
-# Drop Patient_ID
-if "Patient_ID" in df.columns:
-    df = df.drop("Patient_ID", axis=1)
-
-# Parse Blood Pressure
-bp_split = df["Blood_Pressure"].str.split("/", expand=True)
-df["BP_Systolic"] = pd.to_numeric(bp_split[0], errors="coerce")
-df["BP_Diastolic"] = pd.to_numeric(bp_split[1], errors="coerce")
+risk_labels = df["Risk_Level"].copy()
+dept_labels = df["Department"].copy()
+if "Patient_ID" in df.columns: df = df.drop("Patient_ID", axis=1)
+bp = df["Blood_Pressure"].str.split("/", expand=True)
+df["BP_Systolic"] = pd.to_numeric(bp[0], errors="coerce")
+df["BP_Diastolic"] = pd.to_numeric(bp[1], errors="coerce")
 df = df.drop("Blood_Pressure", axis=1)
-
-# Binarize Symptoms (and keep count)
-symptom_df, symptom_mlb = parse_multi_value(df["Symptoms"], ALL_SYMPTOMS, "Sym")
-df["Symptom_Count"] = symptom_df.sum(axis=1)
-df = pd.concat([df.drop("Symptoms", axis=1), symptom_df], axis=1)
-
-# Binarize Conditions (and keep count)
+sym_df, sym_mlb = parse_multi_value(df["Symptoms"], ALL_SYMPTOMS, "Sym")
+df["Symptom_Count"] = sym_df.sum(axis=1)
+df = pd.concat([df.drop("Symptoms", axis=1), sym_df], axis=1)
 cond_df, cond_mlb = parse_multi_value(df["Pre_Existing_Conditions"], ALL_CONDITIONS, "Cond")
 df["Condition_Count"] = cond_df.sum(axis=1)
 df = pd.concat([df.drop("Pre_Existing_Conditions", axis=1), cond_df], axis=1)
-
-# Encode Consciousness Level (ordinal)
-df["Consciousness_Level"] = df["Consciousness_Level"].map(CONS_MAP)
-df["Consciousness_Level"] = df["Consciousness_Level"].fillna(df["Consciousness_Level"].median())
-
-# Encode Gender
-label_encoders = {}
+df["Consciousness_Level"] = df["Consciousness_Level"].map(CONS_MAP).fillna(3)
 le_gender = LabelEncoder()
 df["Gender"] = le_gender.fit_transform(df["Gender"].fillna("Unknown"))
-label_encoders["Gender"] = le_gender
-
-# Handle missing values
-numerical_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-if "Risk_Level" in numerical_cols:
-    numerical_cols.remove("Risk_Level")
-
-missing_before = df.isnull().sum().sum()
-for col in numerical_cols:
-    df[col] = df[col].fillna(df[col].median())
-missing_after = df.isnull().sum().sum()
-print(f"\n🔧 Missing values: {missing_before} → {missing_after}")
-assert missing_after == 0, f"Still {missing_after} NaN remaining!"
-
-# ── ADVANCED FEATURE ENGINEERING ──────────────────────────────────
-print("\n🧠 Engineering advanced clinical features...")
-
-# 1) NEWS2 Clinical Severity Score
+label_encoders = {"Gender": le_gender}
+num_cols = [c for c in df.select_dtypes(include=[np.number]).columns if c not in ["Risk_Level","Department"]]
+for c in num_cols: df[c] = df[c].fillna(df[c].median())
 df["NEWS2_Score"] = compute_news2_score(df)
-print(f"   ✓ NEWS2 Clinical Severity Score (0-18)")
+ints = compute_feature_interactions(df)
+for c in ints.columns: df[c] = ints[c]
 
-# 2) Feature Interactions
-interactions = compute_feature_interactions(df)
-for col in interactions.columns:
-    df[col] = interactions[col]
-print(f"   ✓ {len(interactions.columns)} medical feature interactions")
-print(f"     (Shock_Index, Modified_Shock_Index, Oxy_Stress, Fever_Hypoxia,")
-print(f"      Age_Vulnerability, Symptom_Severity, Comorbidity_Burden,")
-print(f"      Hemodynamic_Instability)")
-
-# Encode target
-target_le = LabelEncoder()
-df["Risk_Level"] = target_le.fit_transform(df["Risk_Level"])
-print(f"   Target classes: {list(target_le.classes_)}")
-
-# Separate features & target
-X = df.drop("Risk_Level", axis=1)
-y = df["Risk_Level"]
+risk_le = LabelEncoder(); df["Risk_Level"] = risk_le.fit_transform(risk_labels)
+dept_le = LabelEncoder(); df["Department"] = dept_le.fit_transform(dept_labels)
+X = df.drop(["Risk_Level","Department"], axis=1)
+y_risk = df["Risk_Level"]; y_dept = df["Department"]
 feature_names = X.columns.tolist()
-
-print(f"\n📐 Final feature matrix: {X.shape[0]} × {X.shape[1]} features")
-
-# Normalize
+print(f"\n📐 {X.shape[1]} features")
 scaler = StandardScaler()
 X_scaled = pd.DataFrame(scaler.fit_transform(X), columns=feature_names)
 
-# ═══════════════════════════════════════════════════════════════════
-# 2. SPLIT & CROSS-VALIDATE
-# ═══════════════════════════════════════════════════════════════════
-print("\n" + "=" * 65)
-print("  STEP 2: Splitting Dataset (80/20) + Cross-Validation")
-print("=" * 65)
+# ── SPLIT ─────────────────────────────────────────────────────────
+X_tr,X_te,yr_tr,yr_te,yd_tr,yd_te = train_test_split(X_scaled,y_risk,y_dept,test_size=0.2,random_state=42,stratify=y_risk)
+print(f"\n   Train: {X_tr.shape[0]} | Test: {X_te.shape[0]}")
 
-X_train, X_test, y_train, y_test = train_test_split(
-    X_scaled, y, test_size=0.2, random_state=42, stratify=y
-)
-print(f"   Training set : {X_train.shape[0]} samples")
-print(f"   Testing set  : {X_test.shape[0]} samples")
-
-# ═══════════════════════════════════════════════════════════════════
-# 3. TRAIN INDIVIDUAL MODELS + STACKING ENSEMBLE
-# ═══════════════════════════════════════════════════════════════════
-print("\n" + "=" * 65)
-print("  STEP 3: Training Models (Individual + Stacking Ensemble)")
-print("=" * 65)
-
-# Individual models
-base_models = {
-    "Logistic Regression": LogisticRegression(max_iter=1000, random_state=42),
-    "Decision Tree": DecisionTreeClassifier(max_depth=12, random_state=42),
-    "Random Forest": RandomForestClassifier(n_estimators=200, random_state=42, n_jobs=-1),
-    "XGBoost": xgb.XGBClassifier(
-        n_estimators=200, max_depth=6, learning_rate=0.1,
-        random_state=42, use_label_encoder=False,
-        eval_metric="mlogloss", verbosity=0
-    ),
+# ── TRAIN RISK MODELS ────────────────────────────────────────────
+print("\n"+"="*65+"\n  STEP 2: Training Risk Models\n"+"="*65)
+r_models = {
+    "LR": LogisticRegression(max_iter=1000,random_state=42),
+    "DT": DecisionTreeClassifier(max_depth=12,random_state=42),
+    "RF": RandomForestClassifier(n_estimators=200,random_state=42,n_jobs=-1),
+    "XGB": xgb.XGBClassifier(n_estimators=200,max_depth=6,learning_rate=0.1,random_state=42,use_label_encoder=False,eval_metric="mlogloss",verbosity=0),
 }
+r_res = {}
+for nm,m in r_models.items():
+    m.fit(X_tr,yr_tr); yp=m.predict(X_te)
+    f1=f1_score(yr_te,yp,average="weighted",zero_division=0)
+    cv=cross_val_score(m,X_scaled,y_risk,cv=5,scoring="f1_weighted")
+    r_res[nm]={"model":m,"f1":f1,"acc":accuracy_score(yr_te,yp),"prec":precision_score(yr_te,yp,average="weighted",zero_division=0),"rec":recall_score(yr_te,yp,average="weighted",zero_division=0),"cm":confusion_matrix(yr_te,yp),"yp":yp,"cv_m":cv.mean(),"cv_s":cv.std()}
+    print(f"  {nm}: F1={f1:.4f} CV={cv.mean():.4f}±{cv.std():.4f}")
 
-results = {}
+print(f"\n🔹 Stacking Ensemble (Risk)...")
+r_stack = StackingClassifier(estimators=[("lr",LogisticRegression(max_iter=1000,random_state=42)),("rf",RandomForestClassifier(n_estimators=200,random_state=42,n_jobs=-1)),("xgb",xgb.XGBClassifier(n_estimators=200,max_depth=6,learning_rate=0.1,random_state=42,use_label_encoder=False,eval_metric="mlogloss",verbosity=0))],final_estimator=GradientBoostingClassifier(n_estimators=100,max_depth=4,random_state=42),cv=5,stack_method="predict_proba",n_jobs=-1)
+r_stack.fit(X_tr,yr_tr); yps=r_stack.predict(X_te)
+f1s=f1_score(yr_te,yps,average="weighted",zero_division=0)
+cvs=cross_val_score(r_stack,X_scaled,y_risk,cv=5,scoring="f1_weighted")
+r_res["Stack"]={"model":r_stack,"f1":f1s,"acc":accuracy_score(yr_te,yps),"prec":precision_score(yr_te,yps,average="weighted",zero_division=0),"rec":recall_score(yr_te,yps,average="weighted",zero_division=0),"cm":confusion_matrix(yr_te,yps),"yp":yps,"cv_m":cvs.mean(),"cv_s":cvs.std()}
+print(f"  Stack: F1={f1s:.4f} CV={cvs.mean():.4f}±{cvs.std():.4f}")
 
-for name, model in base_models.items():
-    print(f"\n🔹 Training {name}...")
-    model.fit(X_train, y_train)
-    y_pred = model.predict(X_test)
+best_rn = max(r_res,key=lambda k:r_res[k]["f1"])
+best_rm = r_res[best_rn]["model"]
+print(f"\n🏆 Best Risk: {best_rn} (F1={r_res[best_rn]['f1']:.4f})")
+print(classification_report(yr_te,r_res[best_rn]["yp"],target_names=risk_le.classes_))
 
-    acc = accuracy_score(y_test, y_pred)
-    prec = precision_score(y_test, y_pred, average="weighted", zero_division=0)
-    rec = recall_score(y_test, y_pred, average="weighted", zero_division=0)
-    f1 = f1_score(y_test, y_pred, average="weighted", zero_division=0)
-    cm = confusion_matrix(y_test, y_pred)
+# ── TRAIN DEPARTMENT MODEL ────────────────────────────────────────
+print("="*65+"\n  STEP 3: Training Department Model\n"+"="*65)
+dept_model = xgb.XGBClassifier(n_estimators=300,max_depth=8,learning_rate=0.1,random_state=42,use_label_encoder=False,eval_metric="mlogloss",verbosity=0)
+dept_model.fit(X_tr,yd_tr); ydp=dept_model.predict(X_te)
+df1=f1_score(yd_te,ydp,average="weighted",zero_division=0)
+dacc=accuracy_score(yd_te,ydp)
+dcv=cross_val_score(dept_model,X_scaled,y_dept,cv=5,scoring="f1_weighted")
+print(f"  Dept XGB: F1={df1:.4f} Acc={dacc:.4f} CV={dcv.mean():.4f}±{dcv.std():.4f}")
+print(classification_report(yd_te,ydp,target_names=dept_le.classes_))
 
-    # 5-fold cross-validation score
-    cv_scores = cross_val_score(model, X_scaled, y, cv=5, scoring="f1_weighted")
+# ── CHARTS ────────────────────────────────────────────────────────
+print("="*65+"\n  STEP 4: Charts\n"+"="*65)
+comp=pd.DataFrame({n:{"Accuracy":r["acc"],"Precision":r["prec"],"Recall":r["rec"],"F1":r["f1"]} for n,r in r_res.items()}).T
+fig,ax=plt.subplots(figsize=(12,6)); comp.plot(kind="bar",ax=ax,colormap="viridis")
+ax.set_title("Risk Model Comparison",fontsize=14,fontweight="bold"); ax.set_ylim(0,1.05); plt.tight_layout()
+plt.savefig(os.path.join(OUTPUT_DIR,"model_comparison.png"),dpi=150); plt.close()
 
-    results[name] = {
-        "model": model, "accuracy": acc, "precision": prec,
-        "recall": rec, "f1_score": f1, "confusion_matrix": cm,
-        "y_pred": y_pred, "cv_mean": cv_scores.mean(), "cv_std": cv_scores.std(),
-    }
-    print(f"   Accuracy  : {acc:.4f}")
-    print(f"   F1-Score  : {f1:.4f}")
-    print(f"   CV F1     : {cv_scores.mean():.4f} ± {cv_scores.std():.4f}")
+n=len(r_res); fig,axes=plt.subplots(1,n,figsize=(5*n,4))
+for ax,(nm,r) in zip(axes,r_res.items()):
+    sns.heatmap(r["cm"],annot=True,fmt="d",cmap="Blues",xticklabels=risk_le.classes_,yticklabels=risk_le.classes_,ax=ax)
+    ax.set_title(nm,fontsize=9)
+plt.suptitle("Risk Confusion Matrices",fontsize=14,fontweight="bold"); plt.tight_layout()
+plt.savefig(os.path.join(OUTPUT_DIR,"confusion_matrices.png"),dpi=150); plt.close()
 
-# ── STACKING ENSEMBLE ────────────────────────────────────────────
-print(f"\n🔹 Training Stacking Ensemble (LR + RF + XGBoost → Meta-Learner)...")
+fig,ax=plt.subplots(figsize=(12,10))
+sns.heatmap(confusion_matrix(yd_te,ydp),annot=True,fmt="d",cmap="Greens",xticklabels=dept_le.classes_,yticklabels=dept_le.classes_,ax=ax)
+ax.set_title("Department Confusion Matrix",fontsize=14,fontweight="bold"); plt.xticks(rotation=45,ha="right"); plt.tight_layout()
+plt.savefig(os.path.join(OUTPUT_DIR,"department_confusion_matrix.png"),dpi=150); plt.close()
 
-stacking_model = StackingClassifier(
-    estimators=[
-        ("lr", LogisticRegression(max_iter=1000, random_state=42)),
-        ("rf", RandomForestClassifier(n_estimators=200, random_state=42, n_jobs=-1)),
-        ("xgb", xgb.XGBClassifier(
-            n_estimators=200, max_depth=6, learning_rate=0.1,
-            random_state=42, use_label_encoder=False,
-            eval_metric="mlogloss", verbosity=0
-        )),
-    ],
-    final_estimator=GradientBoostingClassifier(
-        n_estimators=100, max_depth=4, random_state=42
-    ),
-    cv=5,
-    stack_method="predict_proba",
-    n_jobs=-1,
-)
+xgb_risk = r_models["XGB"]
+fi=pd.Series(xgb_risk.feature_importances_,index=feature_names).sort_values(ascending=True)
+fig,ax=plt.subplots(figsize=(10,12))
+cols=["#e74c3c" if any(k in f for k in ["NEWS2","Shock","Oxy","Fever_Hypoxia","Vulnerability","Severity","Burden","Hemodynamic"]) else "#2ecc71" for f in fi.index]
+fi.plot(kind="barh",ax=ax,color=cols); ax.set_title("Feature Importance",fontsize=12,fontweight="bold"); plt.tight_layout()
+plt.savefig(os.path.join(OUTPUT_DIR,"feature_importance.png"),dpi=150); plt.close()
 
-stacking_model.fit(X_train, y_train)
-y_pred_stack = stacking_model.predict(X_test)
-
-acc_s = accuracy_score(y_test, y_pred_stack)
-prec_s = precision_score(y_test, y_pred_stack, average="weighted", zero_division=0)
-rec_s = recall_score(y_test, y_pred_stack, average="weighted", zero_division=0)
-f1_s = f1_score(y_test, y_pred_stack, average="weighted", zero_division=0)
-cm_s = confusion_matrix(y_test, y_pred_stack)
-cv_stack = cross_val_score(stacking_model, X_scaled, y, cv=5, scoring="f1_weighted")
-
-results["Stacking Ensemble"] = {
-    "model": stacking_model, "accuracy": acc_s, "precision": prec_s,
-    "recall": rec_s, "f1_score": f1_s, "confusion_matrix": cm_s,
-    "y_pred": y_pred_stack, "cv_mean": cv_stack.mean(), "cv_std": cv_stack.std(),
-}
-print(f"   Accuracy  : {acc_s:.4f}")
-print(f"   F1-Score  : {f1_s:.4f}")
-print(f"   CV F1     : {cv_stack.mean():.4f} ± {cv_stack.std():.4f}")
-
-# ═══════════════════════════════════════════════════════════════════
-# 4. EVALUATION SUMMARY
-# ═══════════════════════════════════════════════════════════════════
-print("\n" + "=" * 65)
-print("  STEP 4: Model Comparison")
-print("=" * 65)
-
-comparison_df = pd.DataFrame({
-    name: {
-        "Accuracy": r["accuracy"], "Precision": r["precision"],
-        "Recall": r["recall"], "F1-Score": r["f1_score"],
-        "CV F1 (mean)": r["cv_mean"], "CV F1 (std)": r["cv_std"],
-    }
-    for name, r in results.items()
-}).T
-print(f"\n{comparison_df.to_string()}")
-
-# Chart
-fig, ax = plt.subplots(figsize=(12, 6))
-comparison_df[["Accuracy", "Precision", "Recall", "F1-Score"]].plot(
-    kind="bar", ax=ax, colormap="viridis")
-ax.set_title("Model Comparison — Smart Patient Triage (Advanced)", fontsize=14, fontweight="bold")
-ax.set_ylabel("Score"); ax.set_ylim(0, 1.05)
-ax.legend(loc="lower right"); plt.xticks(rotation=15); plt.tight_layout()
-plt.savefig(os.path.join(OUTPUT_DIR, "model_comparison.png"), dpi=150)
-plt.close()
-
-# Confusion matrices
-n_models = len(results)
-fig, axes = plt.subplots(1, n_models, figsize=(5 * n_models, 4))
-for ax, (name, r) in zip(axes, results.items()):
-    sns.heatmap(r["confusion_matrix"], annot=True, fmt="d", cmap="Blues",
-                xticklabels=target_le.classes_, yticklabels=target_le.classes_, ax=ax)
-    ax.set_title(name, fontsize=9); ax.set_xlabel("Predicted"); ax.set_ylabel("Actual")
-plt.suptitle("Confusion Matrices", fontsize=14, fontweight="bold")
-plt.tight_layout()
-plt.savefig(os.path.join(OUTPUT_DIR, "confusion_matrices.png"), dpi=150)
-plt.close()
-
-# ═══════════════════════════════════════════════════════════════════
-# 5. SELECT BEST MODEL
-# ═══════════════════════════════════════════════════════════════════
-print("\n" + "=" * 65)
-print("  STEP 5: Best Model Selection")
-print("=" * 65)
-
-best_name = max(results, key=lambda k: results[k]["f1_score"])
-best_result = results[best_name]
-best_model = best_result["model"]
-
-print(f"\n🏆 Best Model: {best_name}")
-print(f"   F1-Score : {best_result['f1_score']:.4f}")
-print(f"   Accuracy : {best_result['accuracy']:.4f}")
-print(f"   CV F1    : {best_result['cv_mean']:.4f} ± {best_result['cv_std']:.4f}")
-
-print(f"\n📋 Classification Report ({best_name}):")
-print(classification_report(y_test, best_result["y_pred"],
-                            target_names=target_le.classes_))
-
-# ═══════════════════════════════════════════════════════════════════
-# 6. EXPLAINABILITY
-# ═══════════════════════════════════════════════════════════════════
-print("\n" + "=" * 65)
-print("  STEP 6: Explainability (Feature Importance + SHAP)")
-print("=" * 65)
-
-# For SHAP, always use the XGBoost base model (TreeExplainer is fast)
-xgb_model = base_models["XGBoost"]
-
-# Feature Importance
-if hasattr(xgb_model, "feature_importances_"):
-    fi = pd.Series(xgb_model.feature_importances_, index=feature_names).sort_values(ascending=True)
-    fig, ax = plt.subplots(figsize=(10, 12))
-    colors = ["#e74c3c" if "NEWS2" in f or "Shock" in f or "Oxy" in f or
-              "Fever_Hypoxia" in f or "Vulnerability" in f or "Severity" in f or
-              "Burden" in f or "Hemodynamic" in f
-              else "#2ecc71" for f in fi.index]
-    fi.plot(kind="barh", ax=ax, color=colors)
-    ax.set_title(f"Feature Importance — XGBoost\n(🔴 = engineered features, 🟢 = raw features)",
-                 fontsize=12, fontweight="bold")
-    ax.set_xlabel("Importance")
-    plt.tight_layout()
-    plt.savefig(os.path.join(OUTPUT_DIR, "feature_importance.png"), dpi=150)
-    plt.close()
-    print(f"📊 Feature importance chart saved")
-
-# SHAP
-print("\n🔍 Computing SHAP values...")
 try:
-    explainer = shap.TreeExplainer(xgb_model)
-    shap_values = explainer.shap_values(X_test)
+    exp=shap.TreeExplainer(xgb_risk); sv=exp.shap_values(X_te)
+    s=sv[list(risk_le.classes_).index("High")] if isinstance(sv,list) else sv
+    shap.summary_plot(s,X_te,feature_names=feature_names,show=False)
+    plt.title("SHAP — High Risk",fontsize=13,fontweight="bold"); plt.tight_layout()
+    plt.savefig(os.path.join(OUTPUT_DIR,"shap_summary.png"),dpi=150,bbox_inches="tight"); plt.close()
+except Exception as e: print(f"⚠️ SHAP: {e}")
+print("📊 All charts saved")
 
-    fig, ax = plt.subplots(figsize=(12, 10))
-    if isinstance(shap_values, list):
-        sv = shap_values[list(target_le.classes_).index("High")]
-    else:
-        sv = shap_values
-    shap.summary_plot(sv, X_test, feature_names=feature_names, show=False)
-    plt.title(f"SHAP Summary — XGBoost (High Risk Class)", fontsize=13, fontweight="bold")
-    plt.tight_layout()
-    plt.savefig(os.path.join(OUTPUT_DIR, "shap_summary.png"), dpi=150, bbox_inches="tight")
-    plt.close()
-    print(f"📊 SHAP summary plot saved")
-except Exception as e:
-    print(f"   ⚠️ SHAP warning: {e}")
+# ── KNN ───────────────────────────────────────────────────────────
+knn = NearestNeighbors(n_neighbors=5,metric="euclidean",n_jobs=-1); knn.fit(X_scaled)
 
-# ═══════════════════════════════════════════════════════════════════
-# 7. PATIENT SIMILARITY MODEL (K-Nearest Neighbors)
-# ═══════════════════════════════════════════════════════════════════
-print("\n" + "=" * 65)
-print("  STEP 7: Building Patient Similarity Index")
-print("=" * 65)
+# ── SAVE ──────────────────────────────────────────────────────────
+print("\n"+"="*65+"\n  STEP 5: Saving Artifacts\n"+"="*65)
+arts = {"best_risk_model.pkl":best_rm,"dept_model.pkl":dept_model,"xgb_risk_model.pkl":xgb_risk,"scaler.pkl":scaler,"label_encoders.pkl":label_encoders,"risk_label_encoder.pkl":risk_le,"dept_label_encoder.pkl":dept_le,"multi_label_binarizers.pkl":{"symptoms":sym_mlb,"conditions":cond_mlb},"knn_similarity.pkl":knn,"training_data_scaled.pkl":X_scaled,"training_risk_labels.pkl":y_risk,"training_dept_labels.pkl":y_dept}
+for fn,obj in arts.items():
+    with open(os.path.join(OUTPUT_DIR,fn),"wb") as f: pickle.dump(obj,f)
+    print(f"   💾 {fn}")
+pd.read_csv(DATA_PATH).to_pickle(os.path.join(OUTPUT_DIR,"raw_data.pkl")); print("   💾 raw_data.pkl")
 
-knn_model = NearestNeighbors(n_neighbors=5, metric="euclidean", n_jobs=-1)
-knn_model.fit(X_scaled)
-print(f"   ✓ KNN similarity index built on {X_scaled.shape[0]} patients")
+meta={"best_risk_model":best_rn,"feature_names":feature_names,"risk_classes":list(risk_le.classes_),"department_classes":list(dept_le.classes_),"all_symptoms":ALL_SYMPTOMS,"all_conditions":ALL_CONDITIONS,"consciousness_levels":CONSCIOUSNESS_ORDER,"escalation_threshold":ESCALATION_THRESHOLD,"risk_metrics":{"accuracy":r_res[best_rn]["acc"],"f1_score":r_res[best_rn]["f1"],"cv_f1_mean":r_res[best_rn]["cv_m"]},"dept_metrics":{"accuracy":dacc,"f1_score":df1,"cv_f1_mean":float(dcv.mean())},"priority_weights":{"risk_weight":0.40,"news2_weight":0.25,"vitals_weight":0.20,"age_weight":0.15}}
+with open(os.path.join(OUTPUT_DIR,"model_metadata.json"),"w") as f: json.dump(meta,f,indent=2)
+print("   💾 model_metadata.json")
 
-# ═══════════════════════════════════════════════════════════════════
-# 8. SAVE ALL ARTIFACTS
-# ═══════════════════════════════════════════════════════════════════
-print("\n" + "=" * 65)
-print("  STEP 8: Saving Model Artifacts")
-print("=" * 65)
-
-artifacts = {
-    "best_triage_model.pkl": best_model,
-    "xgb_model.pkl": xgb_model,
-    "scaler.pkl": scaler,
-    "label_encoders.pkl": label_encoders,
-    "target_label_encoder.pkl": target_le,
-    "multi_label_binarizers.pkl": {"symptoms": symptom_mlb, "conditions": cond_mlb},
-    "knn_similarity.pkl": knn_model,
-    "training_data_scaled.pkl": X_scaled,
-    "training_labels.pkl": y,
-}
-
-for fname, obj in artifacts.items():
-    path = os.path.join(OUTPUT_DIR, fname)
-    with open(path, "wb") as f:
-        pickle.dump(obj, f)
-    print(f"   💾 {fname}")
-
-# Save original data for similarity lookups
-df_raw = pd.read_csv(DATA_PATH)
-df_raw.to_pickle(os.path.join(OUTPUT_DIR, "raw_data.pkl"))
-print(f"   💾 raw_data.pkl")
-
-# Metadata
-meta = {
-    "best_model": best_name,
-    "feature_names": feature_names,
-    "target_classes": list(target_le.classes_),
-    "all_symptoms": ALL_SYMPTOMS,
-    "all_conditions": ALL_CONDITIONS,
-    "consciousness_levels": CONSCIOUSNESS_ORDER,
-    "escalation_threshold": ESCALATION_THRESHOLD,
-    "metrics": {
-        "accuracy": best_result["accuracy"],
-        "precision": best_result["precision"],
-        "recall": best_result["recall"],
-        "f1_score": best_result["f1_score"],
-        "cv_f1_mean": best_result["cv_mean"],
-        "cv_f1_std": best_result["cv_std"],
-    },
-    "unique_features": [
-        "NEWS2-inspired Clinical Severity Score",
-        "Shock Index & Modified Shock Index",
-        "Oxygenation Stress Index",
-        "Fever-Hypoxia Interaction",
-        "Age Vulnerability Index",
-        "Symptom Severity Score",
-        "Comorbidity Burden Score",
-        "Hemodynamic Instability Index",
-        "Stacking Ensemble (LR + RF + XGBoost → GBM Meta-Learner)",
-        "Confidence-based Triage Escalation",
-        "Patient Similarity Scoring (KNN)",
-    ],
-    "input_schema": {
-        "Patient_ID": "string (optional, not used for prediction)",
-        "Age": "int (1-95)",
-        "Gender": "string (Male/Female)",
-        "Symptoms": "comma-separated string, e.g. 'Fever, Cough, Chest Pain'",
-        "Blood_Pressure": "string 'systolic/diastolic', e.g. '120/80'",
-        "Heart_Rate": "int (40-180 bpm)",
-        "Temperature": "float (°F, 95.0-106.0)",
-        "SpO2": "int (70-100%)",
-        "Respiratory_Rate": "int (8-45 breaths/min)",
-        "Consciousness_Level": "string (Alert/Verbal/Pain/Unresponsive)",
-        "Pain_Level": "int (0-10)",
-        "Pre_Existing_Conditions": "comma-separated string or 'None'",
-    },
-}
-with open(os.path.join(OUTPUT_DIR, "model_metadata.json"), "w") as f:
-    json.dump(meta, f, indent=2)
-print(f"   💾 model_metadata.json")
-
-print("\n" + "=" * 65)
-print("  ✅ ADVANCED TRAINING PIPELINE COMPLETE")
-print("=" * 65)
-print(f"\n  Best model       : {best_name}")
-print(f"  F1-Score         : {best_result['f1_score']:.4f}")
-print(f"  CV F1            : {best_result['cv_mean']:.4f} ± {best_result['cv_std']:.4f}")
-print(f"  Total features   : {len(feature_names)} (incl. 9 engineered)")
-print(f"  Escalation thr.  : {ESCALATION_THRESHOLD*100:.0f}% confidence")
-print(f"  Artifacts        : {OUTPUT_DIR}/")
-print("=" * 65)
+print(f"\n{'='*65}\n  ✅ TRAINING COMPLETE\n{'='*65}")
+print(f"  Risk : {best_rn} F1={r_res[best_rn]['f1']:.4f}")
+print(f"  Dept : XGBoost F1={df1:.4f}")
+print(f"  Feats: {len(feature_names)} | Depts: {list(dept_le.classes_)}")
+print("="*65)
