@@ -133,30 +133,52 @@ Risk factors:   NEWS2_Score(+0.755), Temperature(+0.393), Pain_Level(+0.349)
 Protective:     Sym_Cough(-0.283), Respiratory_Rate(-0.155), BP_Systolic(-0.117)
 ```
 
-**Python API:**
+**REST API** (`app.py` — for website integration):
 
-```python
-from predict import triage_patient, HospitalQueueManager
+```bash
+python app.py   # starts server on port 5001
+```
 
-result = triage_patient({
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/triage` | Triage a single patient |
+| `POST` | `/api/triage/batch` | Triage multiple patients |
+| `POST` | `/api/queue/admit` | Triage + add to department queue |
+| `GET` | `/api/queue/<dept>` | View a department's queue |
+| `POST` | `/api/queue/<dept>/next` | Pop highest-priority patient |
+| `GET` | `/api/queue/summary` | All department queues |
+| `POST` | `/api/explain` | SHAP explanation for a patient |
+| `POST` | `/api/similar` | Find similar past patients (KNN) |
+| `GET` | `/api/health` | Health check |
+| `GET` | `/api/metadata` | Model info + departments list |
+
+**Example request:**
+
+```bash
+curl -X POST http://localhost:5001/api/triage \
+  -H "Content-Type: application/json" \
+  -d '{
     "Patient_ID": "PT-001", "Age": 72, "Gender": "Male",
     "Symptoms": "Chest Pain, Shortness of Breath",
     "Blood_Pressure": "185/110", "Heart_Rate": 130,
     "Temperature": 103.8, "SpO2": 88,
     "Respiratory_Rate": 32, "Consciousness_Level": "Verbal",
     "Pain_Level": 9, "Pre_Existing_Conditions": "Heart Disease"
-})
+  }'
+```
 
-print(result["risk_level"])      # "High"
-print(result["department"])      # "Cardiology"
-print(result["priority_score"])  # 87.1 / 100
-print(result["confidence"])      # 0.905
-print(result["shap_factors"])    # top contributing features
-
-# Priority queue management
-hospital = HospitalQueueManager()
-hospital.admit_patient(patient_data)
-next_patient = hospital.get_next("Cardiology")  # highest priority first
+**Response:**
+```json
+{
+  "risk_level": "High",
+  "department": "Cardiology",
+  "priority_score": 87.1,
+  "confidence": 0.91,
+  "news2_score": 13.0,
+  "needs_escalation": false,
+  "risk_probabilities": {"High": 0.91, "Medium": 0.09, "Low": 0.0},
+  "dept_probabilities": {"Cardiology": 0.97, "Emergency": 0.03, ...}
+}
 ```
 
 ---
@@ -166,7 +188,8 @@ next_patient = hospital.get_next("Cardiology")  # highest priority first
 ```
 ├── generate_dataset.py    # CTGAN synthetic data + noise injection
 ├── train_model.py         # Dual-model training (Risk + Dept)
-├── predict.py             # Prediction API + SHAP + priority queue
+├── predict.py             # Prediction engine + SHAP + priority queue
+├── app.py                 # Flask REST API (website integration)
 ├── data/
 │   └── patient_triage_dataset.csv
 └── output/
@@ -192,6 +215,9 @@ pip install pandas numpy scikit-learn xgboost shap matplotlib seaborn sdv
 python generate_dataset.py   # Generate 5000 patients via CTGAN
 python train_model.py        # Train Risk + Dept models
 python predict.py            # Run triage demo
+
+# 3. Start API server (for website integration)
+python app.py                # http://localhost:5001
 ```
 
 ---
