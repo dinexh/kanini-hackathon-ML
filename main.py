@@ -140,16 +140,24 @@ def admit_to_queue(patient: PatientInput):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/queue/summary", tags=["Queue"])
+def get_all_queues():
+    """Get a summary of all department queues."""
+    summary = {}
+    for dept, q in hospital.queues.items():
+        summary[dept] = {
+            "size": q.size,
+            "patients": q.get_queue()
+        }
+    return summary
+
 @app.get("/queue/{department}", response_model=QueueResponse, tags=["Queue"])
 def get_department_queue(department: str):
     """Get the current priority queue for a specific department."""
     if department not in hospital.queues:
         return {"department": department, "patients": [], "size": 0}
-    
+
     q = hospital.queues[department]
-    # Reformat queue items to match Pydantic model if needed
-    # HospitalQueueManager.get_queue() returns list of dicts: {'patient_id':..., 'priority_score':..., 'risk_level':..., 'position':...}
-    # This matches QueueItem model.
     return {
         "department": department,
         "patients": q.get_queue(),
@@ -163,17 +171,6 @@ def pop_next_patient(department: str):
     if patient is None:
         raise HTTPException(status_code=404, detail=f"No patients in {department} queue")
     return patient
-
-@app.get("/queue/summary", tags=["Queue"])
-def get_all_queues():
-    """Get a summary of all department queues."""
-    summary = {}
-    for dept, q in hospital.queues.items():
-        summary[dept] = {
-            "size": q.size,
-            "patients": q.get_queue()
-        }
-    return summary
 
 @app.post("/explain", response_model=ExplanationResponse, tags=["Explainability"])
 def explain(patient: PatientInput):

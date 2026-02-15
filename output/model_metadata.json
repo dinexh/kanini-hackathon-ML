@@ -104,14 +104,14 @@
   ],
   "escalation_threshold": 0.6,
   "risk_metrics": {
-    "accuracy": 0.991,
-    "f1_score": 0.9910008839242356,
-    "cv_f1_mean": 0.9898115504777536
+    "accuracy": 0.987,
+    "f1_score": 0.9870142290634285,
+    "cv_f1_mean": 0.9868028772925858
   },
   "dept_metrics": {
-    "accuracy": 0.994,
-    "f1_score": 0.994002689615646,
-    "cv_f1_mean": 0.9901476802341556
+    "accuracy": 0.996,
+    "f1_score": 0.995974382385415,
+    "cv_f1_mean": 0.9914010926906291
   },
   "priority_weights": {
     "risk_weight": 0.4,
