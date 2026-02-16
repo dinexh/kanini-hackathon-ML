@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  api:
+    build: .
+    container_name: KaniniHackathon-ML-Container
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./output:/app/output
+    restart: always
+    environment:
+      - PYTHONUNBUFFERED=1
