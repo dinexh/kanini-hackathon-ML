@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: patient-triage-api
+    env: docker
+    plan: free
+    healthCheckPath: /health
+    autoDeploy: true

@@ -11,7 +11,7 @@ dist/
 build/
 
 # Model artifacts (large binary files — regenerate with train_model.py)
-output/*.pkl
+
 
 # Dataset (regenerate with generate_dataset.py)
 data/*.csv
