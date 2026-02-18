@@ -87,6 +87,12 @@ def health_check():
     """Health check endpoint."""
     return {"status": "ok", "service": "triage-ml-engine-v2"}
 
+@app.get("/", include_in_schema=False)
+def root():
+    """Redirect to docs."""
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/docs")
+
 @app.get("/metadata", tags=["System"])
 def get_metadata():
     """Get model metadata and available classes."""
